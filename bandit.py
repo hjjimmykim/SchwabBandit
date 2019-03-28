@@ -16,7 +16,11 @@ def main(args):
     n = args.n              # Total number of plays
     N = args.N              # Batch/replicas (for averaging)
     algo = args.algo        # 'Thompson', 'Infomax'
-    verbose = args.verbose  # Print messages
+    seed = args.seed        # Random seed
+    verbose = args.verbose  # Print messages (time)
+    
+    # Set random seed
+    np.random.seed(seed)
     
     # Input representation
     p = np.array([p1,p2])             # Prob. of arms
@@ -29,7 +33,8 @@ def main(args):
     if algo == 'Thompson':
         # Initialize beta distribution parameters
         # beta_params_(batch, {alpha,beta}, arm)
-        beta_params = 0.5*np.ones([N,2,2]) # [[[a1,a2],[b1,b2]], ...], uninformative prior = 0.5
+        # 0.5 = uninformative prior, 1 = uniform prior
+        beta_params = 0.5*np.ones([N,2,2]) # [[[a1,a2],[b1,b2]], ...]
     
     # Simulation
     t_start = time.time()
@@ -69,7 +74,8 @@ def main(args):
                 t1 = t2
                 
     t_end = time.time()
-    print('Total runtime: ' + str(t_end-t_start) + ' s')
+    if verbose:
+        print('Total runtime: ' + str(t_end-t_start) + ' s')
     
     output = {'cum_reward':cum_reward, 'cum_subopt':cum_subopt, 'beta_params':beta_params}
     
@@ -85,7 +91,9 @@ if __name__ == "__main__":
     parser.add_argument("--n", default=1000, type=int, help="Total number of plays")
     parser.add_argument("--N", default=1, type=int, help="Replicas (For averaging)")
     parser.add_argument("--algo", default='Thompson', type=str, help="Decision algorithm; 'Thompson', 'Infomax'")
-    parser.add_argument("--verbose", default=0, type=str, help="Print messages")
+    parser.add_argument("--seed", default=111, type=int, help="Random seed")
+    parser.add_argument("--savefig", default=0, type=int, help="Save figures")
+    parser.add_argument("--verbose", default=0, type=int, help="Print messages")
     
     args = parser.parse_args()
 
@@ -111,8 +119,11 @@ if __name__ == "__main__":
     plt.xlabel(r'$\theta$')
     plt.ylabel(r'$p(\theta)$')
     plt.title('Learned beta distributions for each arm after ' + str(args.n) + ' plays')
-    plt.savefig('beta_distribution.png')
-    plt.close()
+    if args.savefig:
+        plt.savefig('beta_distribution.png')
+        plt.close()
+    else:
+        plt.show()
     
     # Plot regret -------------------------------------------------------------------------------
     plt.figure()
@@ -131,5 +142,8 @@ if __name__ == "__main__":
     plt.xlabel('Total number of plays')
     plt.ylabel(r'Regret $<n_2>(p_1-p_2)$')
     plt.title('Regret averaged over ' + str(args.N) + ' replicas')
-    plt.savefig('regret.png')
-    plt.close()
+    if args.savefig:
+        plt.savefig('regret.png')
+        plt.close()
+    else:
+        plt.show()

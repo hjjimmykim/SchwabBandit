@@ -4,6 +4,7 @@ from scipy.stats import beta
 
 import time
 import argparse
+import pickle
 
 # KL-divergence
 def KLdivergence(p,q):
@@ -15,6 +16,7 @@ def main(args):
     p2 = args.p2            # Success probability of the second arm
     n = args.n              # Total number of plays
     N = args.N              # Batch/replicas (for averaging)
+    n_rec = args.n_rec      # Record every n plays
     algo = args.algo        # 'Thompson', 'Infomax'
     seed = args.seed        # Random seed
     verbose = args.verbose  # Print messages (time)
@@ -26,8 +28,11 @@ def main(args):
     p = np.array([p1,p2])             # Prob. of arms
     
     # Output initialization
-    cum_reward = np.zeros([N,n]) # Record cumulative reward at each step
-    cum_subopt = np.zeros([N,n]) # Record number of suboptimal plays
+    curr_cum_reward = np.zeros(N)
+    curr_cum_subopt = np.zeros(N)
+    cum_reward = np.zeros([N,int(n/n_rec)]) # Record cumulative reward at each step
+    cum_subopt = np.zeros([N,int(n/n_rec)]) # Record number of suboptimal plays
+    plays = np.zeros(int(n/n_rec))
     
     # Setup
     if algo == 'Thompson':
@@ -44,20 +49,30 @@ def main(args):
         # Choose arm
         if algo == 'Thompson':
             theta = np.random.beta(beta_params[:,0,:],beta_params[:,1,:]) # [batch, arm]
-            action = np.argmax(theta,1)
+            action = np.argmax(theta,1) # Choose the arm corresponding to the optimal draw
+            
         # Record suboptimal plays
-        if t > 0:
-            cum_subopt[:,t] = cum_subopt[:,t-1]
-        cum_subopt[:,t] += action
+        curr_cum_subopt += action
+        if t % n_rec == 0:
+            cum_subopt[:,int(t/n_rec)] = curr_cum_subopt
+        #if t > 0:
+        #    cum_subopt[:,t] = cum_subopt[:,t-1]
+        #cum_subopt[:,t] += action
 
         # Play the arm
         chance = np.random.random(N) # Random number between 0 and 1
         r = (p[action] > chance).astype(int)         # Get reward
         
+        # Keep track of cumulative rewards
+        curr_cum_reward += r
         # Record cumulative rewards
-        if t > 0:
-            cum_reward[:,t] = cum_reward[:,t-1]
-        cum_reward[:,t] += r
+        if t % n_rec == 0:
+            cum_reward[:,int(t/n_rec)] = curr_cum_reward
+            plays[int(t/n_rec)] = t+1
+        
+        #if t > 0:
+        #    cum_reward[:,t] = cum_reward[:,t-1]
+        #cum_reward[:,t] += r
             
         # Update parameters
         if algo == 'Thompson':
@@ -77,7 +92,7 @@ def main(args):
     if verbose:
         print('Total runtime: ' + str(t_end-t_start) + ' s')
     
-    output = {'cum_reward':cum_reward, 'cum_subopt':cum_subopt, 'beta_params':beta_params}
+    output = {'cum_reward':cum_reward, 'cum_subopt':cum_subopt, 'beta_params':beta_params, 'plays': plays}
     
     return output
 
@@ -90,6 +105,7 @@ if __name__ == "__main__":
     parser.add_argument("--p2", default=0.8, type=float, help="Success probability of the inferior arm")
     parser.add_argument("--n", default=1000, type=int, help="Total number of plays")
     parser.add_argument("--N", default=1, type=int, help="Replicas (For averaging)")
+    parser.add_argument("--n_rec", default=1, type=int, help="Record every n plays")
     parser.add_argument("--algo", default='Thompson', type=str, help="Decision algorithm; 'Thompson', 'Infomax'")
     parser.add_argument("--seed", default=111, type=int, help="Random seed")
     parser.add_argument("--savefig", default=0, type=int, help="Save figures")
@@ -104,7 +120,19 @@ if __name__ == "__main__":
     a = output['cum_reward']
     b = output['beta_params']
     c = output['cum_subopt']
-    c_mean = np.mean(c,0)
+    plays = output['plays']
+    c_mean = np.mean(c,0) # Take average over batches
+    
+    # Save outputs
+    name =  'p1=' + str(args.p1) + \
+            '_p2=' + str(args.p2) + \
+            '_n=' + str(args.n) + \
+            '_N=' + str(args.N) + \
+            '_n_rec=' + str(args.n_rec) + \
+            '_algo=' + str(args.algo) + \
+            '_seed=' + str(args.seed)
+                
+    pickle.dump(output, open(name + '.pickle',"wb"))
     
     # Plot beta distribution --------------------------------------------------------------------
     plt.figure()
@@ -120,14 +148,13 @@ if __name__ == "__main__":
     plt.ylabel(r'$p(\theta)$')
     plt.title('Learned beta distributions for each arm after ' + str(args.n) + ' plays')
     if args.savefig:
-        plt.savefig('beta_distribution.png')
+        plt.savefig('beta_distribution_' + name + '.png')
         plt.close()
     else:
         plt.show()
     
     # Plot regret -------------------------------------------------------------------------------
     plt.figure()
-    plays = np.arange(1, args.n+1)
     # Optimal expected number of suboptimal plays (Lai-Robbins lower bound)
     LB = np.log(plays)/KLdivergence(args.p1,args.p2)
     # Optimal regret
@@ -143,7 +170,7 @@ if __name__ == "__main__":
     plt.ylabel(r'Regret $<n_2>(p_1-p_2)$')
     plt.title('Regret averaged over ' + str(args.N) + ' replicas')
     if args.savefig:
-        plt.savefig('regret.png')
+        plt.savefig('regret_' + name + '.png')
         plt.close()
     else:
         plt.show()

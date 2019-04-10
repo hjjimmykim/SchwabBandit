@@ -1,14 +1,75 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import beta
+from scipy.integrate import quad
 
 import time
 import argparse
 import pickle
 
+# Information Theory Functions ------------------------------------------------------------------
+
 # KL-divergence
 def KLdivergence(p,q):
+    # Takes two probability numbers and returns a number
+    
     return p*np.log(p/q) + (1-p)*np.log((1-p)/(1-q))
+    
+# Probability distribution over max probability
+def Rhomax(x, a1, a2, b1, b2):
+    # Takes numbers and returns a prob. number
+    
+    pdf1 = beta.pdf(x,a1,b1)
+    pdf2 = beta.pdf(x,a2,b2)
+    cdf1 = beta.cdf(x,a1,b1)
+    cdf2 = beta.cdf(x,a2,b2)
+    
+    rho = pdf1 * cdf2 + pdf2 * cdf1
+    
+    return rho
+
+# Vectorized version of above (probably not useful)
+def Rhomax_vectorized(x, beta_params):
+    # Takes full beta_params and returns an array (over batch)
+    
+    a1 = beta_params[:,0,0] # alpha for arm 0
+    b1 = beta_params[:,1,0] # beta for arm 0
+    a2 = beta_params[:,0,1] # alpha for arm 1
+    b2 = beta_params[:,1,1] # beta for arm 1
+    
+    pdf1 = beta.pdf(x,a1,b1)
+    pdf2 = beta.pdf(x,a2,b2)
+    cdf1 = beta.cdf(x,a1,b1)
+    cdf2 = beta.cdf(x,a2,b2)
+    
+    rho = pdf1 * cdf2 + pdf2 * cdf1
+    
+    return rho
+    
+# Posterior distribution over outcome given posterior over probs.
+def Prob(x, a, b):
+    # Takes x = 0 or 1 and a,b = numbers; returns a prob. number
+    
+    if x == 1: # Success
+        integrand = lambda p: beta.pdf(p,a,b) * p
+    elif x == 0:
+        integrand = lambda p: beta.pdf(p,a,b) * (1-p)
+        
+    integral = quad(integrand, 0, 1)[0]
+    
+    return integral
+    
+# Differential entropy over max probability
+def Entropy(a1, a2, b1, b2):
+    # Takes numbers and returns a number
+    
+    integrand = lambda p: -Rhomax(p, a1, a2, b1, b2) * np.log(Rhomax(p, a1, a2, b1, b2))
+    
+    integral = quad(integrand, 0, 1)[0]
+    
+    return integral
+
+# Main function ---------------------------------------------------------------------------------
 
 def main(args):
     # Input unpacking
@@ -39,7 +100,9 @@ def main(args):
         # Initialize beta distribution parameters
         # beta_params_(batch, {alpha,beta}, arm)
         # 0.5 = uninformative prior, 1 = uniform prior
-        beta_params = 0.5*np.ones([N,2,2]) # [[[a1,a2],[b1,b2]], ...]
+        beta_params = 1*np.ones([N,2,2]) # [[[a1,a2],[b1,b2]], ...]
+    elif algo == 'Infomax':
+        beta_params = 1*np.ones([N,2,2])
     
     # Simulation
     t_start = time.time()
@@ -49,7 +112,30 @@ def main(args):
         # Choose arm
         if algo == 'Thompson':
             theta = np.random.beta(beta_params[:,0,:],beta_params[:,1,:]) # [batch, arm]
-            action = np.argmax(theta,1) # Choose the arm corresponding to the optimal draw
+            action = np.argmax(theta,1) # Choose the arm corresponding to the optimal draw (N-array)
+        elif algo == 'Infomax':
+            action = np.zeros(N, dtype = np.int8)
+            for i in range(N): # Loop through batch
+                a1, b1 = beta_params[i,:,0] # Arm 0
+                a2, b2 = beta_params[i,:,1] # Arm 1
+                
+                # Arm 0
+                # Difference in entropy when 0 (failure) observed
+                delH0_0 = Entropy(a1, a2, b1 + 1, b2) - Entropy(a1, a2, b1, b2)
+                # Difference in entropy when 1 (success) observed
+                delH0_1 = Entropy(a1 + 1, a2, b1, b2) - Entropy(a1, a2, b1, b2)
+                # Expected decrease in entropy
+                dH0 = Prob(0,a1,b1)*delH0_0 + Prob(1,a1,b1)*delH0_1
+                
+                # Arm 1
+                # Difference in entropy when 0 (failure) observed
+                delH1_0 = Entropy(a1, a2, b1, b2 + 1) - Entropy(a1, a2, b1, b2)
+                # Difference in entropy when 1 (success) observed
+                delH1_1 = Entropy(a1, a2 + 1, b1, b2) - Entropy(a1, a2, b1, b2)
+                # Expected decrease in entropy
+                dH1 = Prob(0,a2,b2)*delH1_0 + Prob(1,a2,b2)*delH1_1
+                
+                action[i] = int(dH0 > dH1) # pick action that decreases H more (i.e. dH more negative)
             
         # Record suboptimal plays
         curr_cum_subopt += action
@@ -69,13 +155,9 @@ def main(args):
         if t % n_rec == 0:
             cum_reward[:,int(t/n_rec)] = curr_cum_reward
             plays[int(t/n_rec)] = t+1
-        
-        #if t > 0:
-        #    cum_reward[:,t] = cum_reward[:,t-1]
-        #cum_reward[:,t] += r
             
         # Update parameters
-        if algo == 'Thompson':
+        if algo == 'Thompson' or algo == 'Infomax': # Same posterior updates for both
             # Update a
             beta_params[:,0,:][np.arange(N),action] += r
             # Update b
@@ -95,6 +177,52 @@ def main(args):
     output = {'cum_reward':cum_reward, 'cum_subopt':cum_subopt, 'beta_params':beta_params, 'plays': plays}
     
     return output
+    
+# Plotting functions ----------------------------------------------------------------------------
+    
+# Plot learned beta distribution
+def plot_beta(x, a1, a2, b1, b2, p1, p2, n, name, savefig):
+    # ai, bi's = beta distribution parameters for each arm
+    
+    plt.figure()
+    beta1 = beta.pdf(x, a1, b1)
+    beta2 = beta.pdf(x, a2, b2)
+    plt.plot(x, beta1, 'r', linewidth=3, label='Superior arm')
+    plt.plot(x, beta2, 'b', linewidth=3, label='Inferior arm')
+    plt.axvline(x=p1,color='r', linewidth=1, linestyle='--')
+    plt.axvline(x=p2,color='b', linewidth=1, linestyle='--')
+    plt.legend(loc='best')
+    plt.xlabel(r'$\theta$')
+    plt.ylabel(r'$p(\theta)$')
+    plt.title('Learned beta distributions for each arm after ' + str(n) + ' plays')
+    if savefig:
+        plt.savefig('beta_distribution_' + name + '.png')
+        plt.close()
+    else:
+        plt.show()
+        
+# Plot regret
+def plot_regret(plays, c_mean, p1, p2, N, name, savefig):
+    plt.figure()
+    # Optimal expected number of suboptimal plays (Lai-Robbins lower bound)
+    LB = np.log(plays)/KLdivergence(p1,p2)
+    # Optimal regret
+    regret_opt = np.maximum(LB * (p1 - p2)-20, np.zeros(LB.shape))
+    # Actual regret
+    regret_act = c_mean * (p1 - p2)
+    plt.plot(plays, regret_opt, 'k', linewidth=3, label='Lai-Robbins bound slope')
+    plt.plot(plays, regret_act, 'r', linewidth=3, label='Thompson sampling')
+    plt.legend(loc='best')
+    plt.gca().set_xscale('log',basex=10)
+    plt.ylim([0,30])
+    plt.xlabel('Total number of plays')
+    plt.ylabel(r'Regret $<n_2>(p_1-p_2)$')
+    plt.title('Regret averaged over ' + str(N) + ' replicas')
+    if savefig:
+        plt.savefig('regret_' + name + '.png')
+        plt.close()
+    else:
+        plt.show()
 
 if __name__ == "__main__":
     # Parse inputs ------------------------------------------------------------------------------
@@ -116,14 +244,8 @@ if __name__ == "__main__":
     # Run main function -------------------------------------------------------------------------
     output = main(args)
     
-    # Outputs
-    a = output['cum_reward']
-    b = output['beta_params']
-    c = output['cum_subopt']
-    plays = output['plays']
-    c_mean = np.mean(c,0) # Take average over batches
-    
-    # Save outputs
+    # Save output -------------------------------------------------------------------------------
+
     name =  'p1=' + str(args.p1) + \
             '_p2=' + str(args.p2) + \
             '_n=' + str(args.n) + \
@@ -132,45 +254,18 @@ if __name__ == "__main__":
             '_algo=' + str(args.algo) + \
             '_seed=' + str(args.seed)
                 
-    pickle.dump(output, open(name + '.pickle',"wb"))
+    #pickle.dump(output, open(name + '.pickle',"wb"))
     
+    # Extract outputs ---------------------------------------------------------------------------
+    a = output['cum_reward']
+    b = output['beta_params']
+    c = output['cum_subopt']
+    plays = output['plays']
+    c_mean = np.mean(c,0) # Take average over batches
+
     # Plot beta distribution --------------------------------------------------------------------
-    plt.figure()
-    x = np.linspace(0,1,1000)
-    beta1 = beta.pdf(x,b[0,0,0],b[0,1,0])
-    beta2 = beta.pdf(x,b[0,0,1],b[0,1,1])
-    plt.plot(x, beta1, 'r', linewidth=3, label='Superior arm')
-    plt.plot(x, beta2, 'b', linewidth=3, label='Inferior arm')
-    plt.axvline(x=args.p1,color='r', linewidth=1, linestyle='--')
-    plt.axvline(x=args.p2,color='b', linewidth=1, linestyle='--')
-    plt.legend(loc='best')
-    plt.xlabel(r'$\theta$')
-    plt.ylabel(r'$p(\theta)$')
-    plt.title('Learned beta distributions for each arm after ' + str(args.n) + ' plays')
-    if args.savefig:
-        plt.savefig('beta_distribution_' + name + '.png')
-        plt.close()
-    else:
-        plt.show()
-    
+    x = np.linspace(0,1,1000) # Parameter space [0,1]
+    plot_beta(x,b[0,0,0],b[0,0,1],b[0,1,0],b[0,1,1],args.p1,args.p2,args.n,name,args.savefig)
+
     # Plot regret -------------------------------------------------------------------------------
-    plt.figure()
-    # Optimal expected number of suboptimal plays (Lai-Robbins lower bound)
-    LB = np.log(plays)/KLdivergence(args.p1,args.p2)
-    # Optimal regret
-    regret_opt = np.maximum(LB * (args.p1 - args.p2)-20, np.zeros(LB.shape))
-    # Actual regret
-    regret_act = c_mean * (args.p1 - args.p2)
-    plt.plot(plays, regret_opt, 'k', linewidth=3, label='Lai-Robbins bound slope')
-    plt.plot(plays, regret_act, 'r', linewidth=3, label='Thompson sampling')
-    plt.legend(loc='best')
-    plt.gca().set_xscale('log',basex=10)
-    plt.ylim([0,30])
-    plt.xlabel('Total number of plays')
-    plt.ylabel(r'Regret $<n_2>(p_1-p_2)$')
-    plt.title('Regret averaged over ' + str(args.N) + ' replicas')
-    if args.savefig:
-        plt.savefig('regret_' + name + '.png')
-        plt.close()
-    else:
-        plt.show()
+    plot_regret(plays,c_mean,args.p1,args.p2,args.N,name,args.savefig)

@@ -50,15 +50,21 @@ def Rhomax_vectorized(x, beta_params):
 def Prob(x, a, b):
     # Takes x = 0 or 1 and a,b = numbers; returns a prob. number
     
+    '''
     if x == 1: # Success
         integrand = lambda p: beta.pdf(p,a,b) * p
     elif x == 0:
         integrand = lambda p: beta.pdf(p,a,b) * (1-p)
         
     integral = quad(integrand, 0, 1)[0]
-    
     return integral
+    '''
     
+    if x == 1: # Success
+        return a/(a+b)
+    elif x == 0:
+        return b/(a+b)
+        
 # Differential entropy over max probability
 def Entropy(a1, a2, b1, b2):
     # Takes numbers and returns a number
@@ -90,7 +96,7 @@ def main(args):
     
     # Output initialization
     curr_cum_reward = np.zeros(N)
-    curr_cum_subopt = np.zeros(N)
+    curr_cum_subopt = np.zeros(N) # Number of times you pull suboptimal arm
     cum_reward = np.zeros([N,int(n/n_rec)]) # Record cumulative reward at each step
     cum_subopt = np.zeros([N,int(n/n_rec)]) # Record number of suboptimal plays
     plays = np.zeros(int(n/n_rec))
@@ -119,19 +125,22 @@ def main(args):
                 a1, b1 = beta_params[i,:,0] # Arm 0
                 a2, b2 = beta_params[i,:,1] # Arm 1
                 
+                # Original entropy
+                Entropy0 = Entropy(a1, a2, b1, b2)
+                
                 # Arm 0
                 # Difference in entropy when 0 (failure) observed
-                delH0_0 = Entropy(a1, a2, b1 + 1, b2) - Entropy(a1, a2, b1, b2)
+                delH0_0 = Entropy(a1, a2, b1 + 1, b2) - Entropy0
                 # Difference in entropy when 1 (success) observed
-                delH0_1 = Entropy(a1 + 1, a2, b1, b2) - Entropy(a1, a2, b1, b2)
+                delH0_1 = Entropy(a1 + 1, a2, b1, b2) - Entropy0
                 # Expected decrease in entropy
                 dH0 = Prob(0,a1,b1)*delH0_0 + Prob(1,a1,b1)*delH0_1
                 
                 # Arm 1
                 # Difference in entropy when 0 (failure) observed
-                delH1_0 = Entropy(a1, a2, b1, b2 + 1) - Entropy(a1, a2, b1, b2)
+                delH1_0 = Entropy(a1, a2, b1, b2 + 1) - Entropy0
                 # Difference in entropy when 1 (success) observed
-                delH1_1 = Entropy(a1, a2 + 1, b1, b2) - Entropy(a1, a2, b1, b2)
+                delH1_1 = Entropy(a1, a2 + 1, b1, b2) - Entropy0
                 # Expected decrease in entropy
                 dH1 = Prob(0,a2,b2)*delH1_0 + Prob(1,a2,b2)*delH1_1
                 
@@ -226,7 +235,7 @@ def plot_regret(plays, c_mean, p1, p2, N, name, savefig):
 
 if __name__ == "__main__":
     # Parse inputs ------------------------------------------------------------------------------
-    # Example command: python bandit.py --n 1000000 --N 100 --verbose 1
+    # Example command: python bandit.py --n 100 --algo Infomax --verbose 1
     parser = argparse.ArgumentParser(description='2-armed bandit')
     
     parser.add_argument("--p1", default=0.9, type=float, help="Success probability of the superior arm")

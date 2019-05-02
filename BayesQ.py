@@ -14,6 +14,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import gamma
+from scipy.stats import t as tdist
 from scipy.integrate import quad
 
 import time
@@ -33,7 +34,7 @@ def initialize(num_replicas, num_states, num_actions, init_scheme = 'Zero'):
     
     return Q
 
-# Information Theory Functions ------------------------------------------------------------------
+# Statistics Functions --------------------------------------------------------------------------
 
 # Sample mu & tau from normal-gamma distribution
 def sample_NG(params):
@@ -46,34 +47,10 @@ def sample_NG(params):
     mu_sample = np.random.normal(mu0,np.sqrt(1/(lamb*tau_sample)))
     
     return mu_sample, tau_sample
-
-# KL-divergence
-def KLdivergence(p,q):
-    # Takes two probability numbers and returns a number
-    
-    return p*np.log(p/q) + (1-p)*np.log((1-p)/(1-q))
     
 # Probability distribution over max probability
 def Rhomax(x, a1, a2, b1, b2):
     # Takes numbers and returns a prob. number
-    
-    pdf1 = beta.pdf(x,a1,b1)
-    pdf2 = beta.pdf(x,a2,b2)
-    cdf1 = beta.cdf(x,a1,b1)
-    cdf2 = beta.cdf(x,a2,b2)
-    
-    rho = pdf1 * cdf2 + pdf2 * cdf1
-    
-    return rho
-
-# Vectorized version of above (probably not useful)
-def Rhomax_vectorized(x, beta_params):
-    # Takes full beta_params and returns an array (over batch)
-    
-    a1 = beta_params[:,0,0] # alpha for arm 0
-    b1 = beta_params[:,1,0] # beta for arm 0
-    a2 = beta_params[:,0,1] # alpha for arm 1
-    b2 = beta_params[:,1,1] # beta for arm 1
     
     pdf1 = beta.pdf(x,a1,b1)
     pdf2 = beta.pdf(x,a2,b2)
@@ -137,7 +114,8 @@ def main(args):
     elif algo == 'BayesQS':
         # Initialize Normal-gamma distribution parameters
         # NG_params_(batch, states, actions, {mu0,lambda,alpha,beta})
-        # 0.5 = uninformative prior, 1 = uniform prior
+        NG_params = 1.5*np.ones([N,6,2,4])
+    elif algo == 'Infomax':
         NG_params = 1.5*np.ones([N,6,2,4])
     
     # Simulation
@@ -173,8 +151,8 @@ def main(args):
                 
                 # Choose the action corresponding to the optimal draw
                 action[i] = int(mu_1 > mu_0)
-            
-            '''
+                
+        elif algo == 'Infomax':
             for i in range(N): # Loop through batch
                 a1, b1 = beta_params[i,:,0] # Arm 0
                 a2, b2 = beta_params[i,:,1] # Arm 1
@@ -196,8 +174,6 @@ def main(args):
                 dH1 = Prob(0,a2,b2)*delH1_0 + Prob(1,a2,b2)*delH1_1
                 
                 action[i] = int(dH0 > dH1) # pick action that decreases H more (i.e. dH more negative)
-            '''
-            
 
         # Play
         chance = np.random.random(N) # Random number between 0 and 1; slip prob.
@@ -228,7 +204,7 @@ def main(args):
             for i in range(N):
                 Q[i,state[i],action[i]] = (1-alpha)*Q[i,state[i],action[i]] + alpha * (r[i] + gamma*max(Q[i,state_new[i]]))
                 
-        elif algo == 'BayesQS':
+        elif algo == 'BayesQS' or algo == 'Infomax': # Same posterior
             # Loop through batch
             for i in range(N):
                 # Current state
@@ -255,13 +231,6 @@ def main(args):
                 NG_params[i][s_s][a_s][1] += 1
                 NG_params[i][s_s][a_s][2] += 0.5
                 NG_params[i][s_s][a_s][3] += 0.5*(M2-M1**2) + (lamb*(M1-mu0)**2)/(2*(lamb+1))
-                
-            '''
-            # Update a
-            beta_params[:,0,:][np.arange(N),action] += r
-            # Update b
-            beta_params[:,1,:][np.arange(N),action] += 1-r
-            '''
             
         # Move to next state
         state = state_new
@@ -277,10 +246,10 @@ def main(args):
     if verbose:
         print('Total runtime: ' + str(t_end-t_start) + ' s')
     
+    output = {'cum_reward':cum_reward, 'plays':plays}
+    
     if algo == 'Qlearn':
-        output = {'cum_reward':cum_reward, 'Q':Q, 'plays': plays}
-    elif algo == 'BayesQS':
-        output = {'cum_reward':cum_reward, 'plays':plays}
+        output['Q'] = Q
     
     return output
     

@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 
 from scipy.stats import norm
 from scipy.stats import gamma 
+from scipy.stats import t as tdist
 from scipy.special import gamma as gammafunc
 
 # Marginal distribution for mu
@@ -73,6 +74,9 @@ tau_sample = np.random.gamma(NG_params[0][2], 1/NG_params[0][3], N_sample)
 # Sample mu (mean, std)
 mu_sample = np.random.normal(NG_params[0][0],np.sqrt(1/(NG_params[0][1]*tau_sample)))
 
+# Sample mu (Marginal distribution)
+mu_sample2 = tdist.rvs(2*NG_params[0][2], NG_params[0][0], np.sqrt(NG_params[0][3]/(NG_params[0][1]*NG_params[0][2])), size=N_sample)
+
 # ----------------------------------------------------------------------- 
 #NG_params = [[1.5,1.5,1.5,1.5]]  
 # Plot posterior distributions
@@ -99,12 +103,14 @@ plt.show()
 # Plot sampled mu & tau
 plt.figure()
 plt.subplot(121)
-plt.hist(mu_sample)
+plt.hist(mu_sample, label=r'Both $\tau$ and $\mu$ sampled')
+plt.hist(mu_sample2, label=r'Marginal samples')
 plt.axvline(x=mu_true,color='r', linewidth=1, linestyle='--')
 plt.title(r'Sampled distribution for $\mu$')
 plt.xlabel(r'$\mu$')
 plt.ylabel('pdf')
-plt.xlim([-10,10])
+plt.xlim([4,6])
+plt.legend()
 
 plt.subplot(122)
 plt.hist(tau_sample)

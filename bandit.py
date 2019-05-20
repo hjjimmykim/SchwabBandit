@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy.stats as st
 from scipy.stats import beta
 from scipy.integrate import quad
 
@@ -14,6 +15,22 @@ def KLdivergence(p,q):
     # Takes two probability numbers and returns a number
     
     return p*np.log(p/q) + (1-p)*np.log((1-p)/(1-q))
+    
+# Probability distribution over max probability; treated as distribution
+class Rhomax_dist(st.rv_continuous):
+    def _pdf(self, x, a1,a2,b1,b2):
+        return beta.pdf(x,a1,b1)*beta.cdf(x,a2,b2)+beta.pdf(x,a2,b2)*beta.cdf(x,a1,b1)
+   
+    
+'''
+# Probability distribution over max probability; treated as distribution
+def Rhomax_dist(a1, a2, b1, b2):
+    x = Symbol('x')
+    
+    func = lambda p: beta.pdf(p,a1,b1)*beta.cdf(p,a2,b2)+beta.pdf(p,a2,b2)*beta.cdf(p,a1,b1)
+    
+    return ContinuousRV(x, func(x), Interval(0,1))
+'''
     
 # Probability distribution over max probability
 def Rhomax(x, a1, a2, b1, b2):
@@ -66,7 +83,7 @@ def Prob(x, a, b):
         return b/(a+b)
         
 # Differential entropy over max probability
-def Entropy(a1, a2, b1, b2):
+def Entropy_int(a1, a2, b1, b2):
     # Takes numbers and returns a number
     
     integrand = lambda p: -Rhomax(p, a1, a2, b1, b2) * np.log(Rhomax(p, a1, a2, b1, b2))
@@ -74,6 +91,26 @@ def Entropy(a1, a2, b1, b2):
     integral = quad(integrand, 0, 1)[0]
     
     return integral
+    
+# Estimate entropy via sampling
+def Entropy_est(a1, a2, b1, b2):
+    N_disc = 2 # Number of discrete points
+    N_sample = 100000 # Number of samples
+    
+    # Rhomax distribution
+    entropy_dist = np.vectorize(lambda p: Rhomax(p, a1, a2, b1, b2))
+    
+    # Discretize
+    entropy_dist_disc = entropy_dist(np.linspace(0,1,N_disc+2)[1:-1]) # Rhomax
+    # Normalize
+    entropy_dist_disc = entropy_dist_disc/np.sum(entropy_dist_disc)
+    
+    entropy_val_disc = -np.log(entropy_dist_disc) # -log Rhomax
+    
+    # Sample from the distribution
+    sample_points = np.random.choice(entropy_val_disc, N_sample, p=entropy_dist_disc)
+    
+    return np.mean(sample_points)
 
 # Main function ---------------------------------------------------------------------------------
 
@@ -107,8 +144,12 @@ def main(args):
         # beta_params_(batch, {alpha,beta}, arm)
         # 0.5 = uninformative prior, 1 = uniform prior
         beta_params = 1*np.ones([N,2,2]) # [[[a1,a2],[b1,b2]], ...]
-    elif algo == 'Infomax':
+    elif algo in ['Infomax', 'Infomax_est']:
         beta_params = 1*np.ones([N,2,2])
+        if algo == 'Infomax':
+            Entropy = Entropy_int
+        elif algo == 'Infomax_est':
+            Entropy = Entropy_est
     
     # Simulation
     t_start = time.time()
@@ -119,28 +160,28 @@ def main(args):
         if algo == 'Thompson':
             theta = np.random.beta(beta_params[:,0,:],beta_params[:,1,:]) # [batch, arm]
             action = np.argmax(theta,1) # Choose the arm corresponding to the optimal draw (N-array)
-        elif algo == 'Infomax':
+        elif algo in ['Infomax', 'Infomax_est']:
             action = np.zeros(N, dtype = np.int8)
             for i in range(N): # Loop through batch
                 a1, b1 = beta_params[i,:,0] # Arm 0
                 a2, b2 = beta_params[i,:,1] # Arm 1
                 
-                # Original entropy
-                Entropy0 = Entropy(a1, a2, b1, b2)
+                # Original entropy (don't need for comparing difference)
+                #Entropy0 = Entropy(a1, a2, b1, b2)
                 
                 # Arm 0
                 # Difference in entropy when 0 (failure) observed
-                delH0_0 = Entropy(a1, a2, b1 + 1, b2) - Entropy0
+                delH0_0 = Entropy(a1, a2, b1 + 1, b2) #- Entropy0
                 # Difference in entropy when 1 (success) observed
-                delH0_1 = Entropy(a1 + 1, a2, b1, b2) - Entropy0
+                delH0_1 = Entropy(a1 + 1, a2, b1, b2) #- Entropy0
                 # Expected decrease in entropy
                 dH0 = Prob(0,a1,b1)*delH0_0 + Prob(1,a1,b1)*delH0_1
                 
                 # Arm 1
                 # Difference in entropy when 0 (failure) observed
-                delH1_0 = Entropy(a1, a2, b1, b2 + 1) - Entropy0
+                delH1_0 = Entropy(a1, a2, b1, b2 + 1) #- Entropy0
                 # Difference in entropy when 1 (success) observed
-                delH1_1 = Entropy(a1, a2 + 1, b1, b2) - Entropy0
+                delH1_1 = Entropy(a1, a2 + 1, b1, b2) #- Entropy0
                 # Expected decrease in entropy
                 dH1 = Prob(0,a2,b2)*delH1_0 + Prob(1,a2,b2)*delH1_1
                 
@@ -166,7 +207,7 @@ def main(args):
             plays[int(t/n_rec)] = t+1
             
         # Update parameters
-        if algo == 'Thompson' or algo == 'Infomax': # Same posterior updates for both
+        if algo in ['Thompson', 'Infomax', 'Infomax_est']: # Same posterior updates for both
             # Update a
             beta_params[:,0,:][np.arange(N),action] += r
             # Update b

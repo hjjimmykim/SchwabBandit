@@ -154,8 +154,13 @@ def main(args):
                 
         elif algo == 'Infomax':
             for i in range(N): # Loop through batch
-                a1, b1 = beta_params[i,:,0] # Arm 0
-                a2, b2 = beta_params[i,:,1] # Arm 1
+                # Current state
+                s_s = state[i]
+                
+                # Action 0
+                mu0_0,lamb_0,alpha_0,beta_0 = NG_params[i][s_s][0]
+                # Action 1
+                mu0_1,lamb_1,alpha_1,beta_1 = NG_params[i][s_s][1]
                 
                 # Arm 0
                 # Difference in entropy when 0 (failure) observed

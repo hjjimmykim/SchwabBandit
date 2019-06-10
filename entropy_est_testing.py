@@ -7,7 +7,7 @@ import bandit as Ban #Insert 7 Deadly Sins anime reference
 
 
 timing_runs = 10000   # Number of runs to determine computation time
-acc_runs = 100      # Number of runs to determine accuracy
+acc_runs = 1000      # Number of runs to determine accuracy
 
 
 ## Testing Sampling
@@ -63,6 +63,7 @@ J_MSE = np.mean( (J_est_list-ent_target)**2 )
 print("Jimmy's Mean:", J_est_mean)
 print("Jimmy's MSE:", J_MSE)
 '''
+'''
 # Nearest Neighbor Entropy Estimation
 def nn_entropy(a1,a2,b1,b2, N_disc=50, N_sample=10000):
     Rhomax_vec = np.vectorize(lambda p: Ban.Rhomax(p, a1, a2, b1, b2))
@@ -70,21 +71,34 @@ def nn_entropy(a1,a2,b1,b2, N_disc=50, N_sample=10000):
     # Discretize
     Rhomax_disc = Rhomax_vec(p_list)
     # Normalize
-    Rhomax_disc = Rhomax_disc/np.sum(Rhomax_disc)
+    Rhomax_disc_nrm = Rhomax_disc/np.sum(Rhomax_disc)
     # Sample from the distribution
     sample_lst = []
     for i in range(N_sample):
-        sample_lst.append( [np.random.choice(p_list, p=Rhomax_disc)] )
+        sample_lst.append( [np.random.choice(Rhomax_disc, p=Rhomax_disc_nrm)] )
+##        sample_lst.append( np.random.choice(Rhomax_disc, p=Rhomax_disc_nrm) )
     return ee.entropy(sample_lst)
+'''
+# Modified Jimmy Estimation
+def entropy_est2(a1,a2,b1,b2, N_disc=50, N_sample=10000):
+    Rhomax_vec = np.vectorize(lambda p: Ban.Rhomax(p, a1, a2, b1, b2))
+    p_list = np.linspace(0,1,N_disc+2)[1:-1]
+    # Discretize
+    Rhomax_disc = Rhomax_vec(p_list)
+    # Normalize
+    Rhomax_disc_nrm = Rhomax_disc/np.sum(Rhomax_disc)
+    # Sample from the distribution
+    sample_lst = np.array([])
+    sample_lst = np.append( sample_lst, np.random.choice(-np.log2(Rhomax_disc), p=Rhomax_disc_nrm) )
+    return np.mean(sample_lst)
 
-nn_est_list = np.array([])
+ent_est_lst = np.array([])
 for i in range(acc_runs):
-    nn_est_list = np.append( nn_est_list, nn_entropy(2,5,5,2) )
-print( nn_est_list[0:5] )
-nn_est_mean = np.mean(nn_est_list)
-nn_MSE = np.mean( (nn_est_list-ent_target)**2 )
-print("NPEET Mean:", nn_est_mean)
-print("NPEET MSE:", nn_MSE)
+    ent_est_lst = np.append( ent_est_lst, entropy_est2(2,5,5,2) )
+ent_est_mean = np.mean(ent_est_lst)
+MSE = np.mean( (ent_est_lst-ent_target)**2 )
+print("Mean:", ent_est_mean)
+print("MSE:", MSE)
 
 
 ## Plotting (but not scheming)
@@ -97,10 +111,10 @@ plt.ylabel('Frequency')
 plt.title("Jimmy's Estimated Entropy")
 plt.show()
 '''
-plt.hist(x=nn_est_list, bins='auto')
-#plt.axvline( x=ent_target, color='r', linewidth=1, linestyle='--' )
-plt.axvline( x=nn_est_mean, color='b', linewidth=1, linestyle='--' )
+plt.hist(x=ent_est_lst, bins='auto')
+plt.axvline( x=ent_target, color='r', linewidth=1, linestyle='--' )
+plt.axvline( x=ent_est_mean, color='b', linewidth=1, linestyle='--' )
 plt.xlabel('Entropy')
 plt.ylabel('Frequency')
-plt.title("NPEET Estimated Entropy")
+plt.title("Estimated Entropy")
 plt.show()

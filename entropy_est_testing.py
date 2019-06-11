@@ -6,13 +6,15 @@ import matplotlib.pyplot as plt
 from scipy.stats import beta
 from scipy.integrate import quad
 
-from numba import complex128, float64, jit
+#from numba import complex128, float64, jit
 
-import entropy_estimators as ee
-import bandit as Ban #Insert 7 Deadly Sins anime reference
+#import entropy_estimators as ee
+import bandit as Ban #Insert 7 Deadly Sins anime referencea
+
+import ghalton
 
 
-timing_runs = 1000   # Number of runs to determine computation time
+timing_runs = 100000   # Number of runs to determine computation time
 acc_runs = 10000      # Number of runs to determine accuracy
 
 
@@ -50,7 +52,7 @@ J_est_mean = np.mean(J_est_list)
 J_MSE = np.mean( (J_est_list-ent_target)**2 )
 print("Jimmy's Mean:", J_est_mean)
 print("Jimmy's MSE:", J_MSE)
-'''
+
 # Nearest Neighbor Entropy Estimation
 def nn_entropy(a1,a2,b1,b2, N_disc=50, N_sample=10000):
     Rhomax_vec = np.vectorize(lambda p: Ban.Rhomax(p, a1, a2, b1, b2))
@@ -64,7 +66,7 @@ def nn_entropy(a1,a2,b1,b2, N_disc=50, N_sample=10000):
     for i in range(N_sample):
         sample_lst.append( [np.random.choice(Rhomax_disc, p=Rhomax_disc_nrm)] )
     return ee.entropy(sample_lst)
-
+'''
 # Modified Jimmy Estimation
 def entropy_est2(a1,a2,b1,b2, N_disc=50, N_sample=10000):
     Rhomax_vec = np.vectorize(lambda p: Ban.Rhomax(p, a1, a2, b1, b2))
@@ -80,6 +82,7 @@ def entropy_est2(a1,a2,b1,b2, N_disc=50, N_sample=10000):
 
 # Playing around with numeric integration
 #@jit(complex128(float64, float64, float64,float64,float64), nopython=True, cache=True)
+# Used in MC functions too!
 def rhomax_integrand(x,a1,a2,b1,b2):
     pdf1 = beta.pdf(x,a1,b1)
     pdf2 = beta.pdf(x,a2,b2)
@@ -105,6 +108,25 @@ def entropy_int3(a1,a2,b1,b2):
     integral = quad(integrand, 0, 1)[0]
     return integral
 
+## Monte Carlo Integration
+def mc_int0(a1=2, a2=5, b1=5, b2=2, samples=10**6):
+    x = np.random.uniform(0, 1, samples)
+    integral = np.mean( rhomax_integrand(x,a1,a2,b1,b2) )
+    return integral
+
+def mc_int1(a1=2, a2=5, b1=5, b2=2, samples=10**3): # Reduced variance, slightly slower
+    x = np.random.random(samples//2)
+    x = np.r_[ x, 1-x ] # Antithetic variables
+    integral = np.mean( rhomax_integrand(x,a1,a2,b1,b2) )
+    return integral
+seq = ghalton.Halton(1)
+def mc_int2(a1=2,a2=5,b1=5,b2=2, samples=1000):
+    seq.reset()
+    x = seq.get(samples)
+    x = np.reshape(x, samples)
+    integral = np.mean( rhomax_integrand(x,a1,a2,b1,b2) )
+    return integral
+
 
 ##Timing
 def time_test(fnc, args, trials=timing_runs):
@@ -113,9 +135,15 @@ def time_test(fnc, args, trials=timing_runs):
         fnc(*args)
     t_fin = time.time()
     return t_fin-t_start
-print("Integral 1:", time_test(Ban.Entropy_int, (2,5,5,2) ) )
-print("Integral 2:", time_test(entropy_int2, (rhomax_integrand,(2,5,5,2)) ) )
-print("Integral 3:", time_test(entropy_int3, (2,5,5,2) ) )
+#print("Integral 1:", time_test(Ban.Entropy_int, (2,5,5,2) ) )
+#print("Integral 2:", time_test(entropy_int2, (rhomax_integrand,(2,5,5,2)) ) )
+#print("Integral 3:", time_test(entropy_int3, (2,5,5,2) ) )
+'''
+for n in [10,100,1000]:
+    print("MC 0, Samples:", n, "Time:", time_test( mc_int0, (2,5,5,2,n) ) ) 
+    print("MC 1, Samples:", n, "Time:", time_test( mc_int1, (2,5,5,2,n) ) ) 
+    print("MC 2, Samples:", n, "Time:", time_test( mc_int2, (2,5,5,2,n) ) )
+'''
 
 ## Accuracy
 ent_target = Ban.Entropy_int(2,5,5,2)
@@ -126,9 +154,19 @@ def acc_test(fnc, args, trials=acc_runs):
     ent_est_mean = np.mean(ent_est_lst)
     MSE = np.mean( (ent_est_lst-ent_target)**2 )
     return ent_est_mean, MSE
-print("Integral 1:", acc_test(Ban.Entropy_int, (2,5,5,2) ) )
-print("Integral 2:", acc_test(entropy_int2, (rhomax_integrand,(2,5,5,2)) ) )
-print("Integral 3:", acc_test(entropy_int3, (2,5,5,2) ) )
+#print("Integral 1:", acc_test(Ban.Entropy_int, (2,5,5,2) ) )
+#print("Integral 2:", acc_test(entropy_int2, (rhomax_integrand,(2,5,5,2)) ) )
+#print("Integral 3:", acc_test(entropy_int3, (2,5,5,2) ) )
+'''
+for n in [10,100,1000]:
+    print( "MC 0, Samples:", n, "Acc:", acc_test( mc_int0, (2,5,5,2,n) ) )
+    print( "MC 1, Samples:", n, "Acc:", acc_test( mc_int1, (2,5,5,2,n) ) )
+    print( "MC 2, Samples:", n, "Acc:", acc_test( mc_int2, (2,5,5,2,n) ) )
+'''
+print("Int 0, 1000 Samples, Time:", time_test( mc_int0, (2,5,5,2,1000) ) )
+print("Int 2, 100 Samples, Time:", time_test( mc_int2, (2,5,5,2,100) ) )
+print("Int 0, 1000 Samples, Acc:", acc_test( mc_int0, (2,5,5,2,1000) ) )
+print("Int 2, 100 Samples, Acc:", acc_test( mc_int2, (2,5,5,2,100) ) )
 '''
 ## Plotting (but not scheming)
 plt.hist(x=J_est_list, bins='auto')

@@ -12,8 +12,8 @@ import entropy_estimators as ee
 import bandit as Ban #Insert 7 Deadly Sins anime reference
 
 
-timing_runs = 2   # Number of runs to determine computation time
-acc_runs = 2      # Number of runs to determine accuracy
+timing_runs = 1000   # Number of runs to determine computation time
+acc_runs = 10000      # Number of runs to determine accuracy
 
 
 ## Testing Sampling

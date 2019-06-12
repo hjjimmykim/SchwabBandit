@@ -126,6 +126,13 @@ def mc_int2(a1=2,a2=5,b1=5,b2=2, samples=1000):
     x = np.reshape(x, samples)
     integral = np.mean( rhomax_integrand(x,a1,a2,b1,b2) )
     return integral
+def mc_int3(a1=2,a2=5,b1=5,b2=2, samples=100):
+    seq.reset()
+    x = seq.get(samples)
+    x = np.reshape(x, samples)
+    x += np.random.uniform(-1/(2*samples), 1/(2*samples), x.shape)
+    integral = np.mean( rhomax_integrand(x,a1,a2,b1,b2) )
+    return integral
 
 
 ##Timing
@@ -163,10 +170,12 @@ for n in [10,100,1000]:
     print( "MC 1, Samples:", n, "Acc:", acc_test( mc_int1, (2,5,5,2,n) ) )
     print( "MC 2, Samples:", n, "Acc:", acc_test( mc_int2, (2,5,5,2,n) ) )
 '''
-print("Int 0, 1000 Samples, Time:", time_test( mc_int0, (2,5,5,2,1000) ) )
+#print("Int 0, 1000 Samples, Time:", time_test( mc_int0, (2,5,5,2,1000) ) )
 print("Int 2, 100 Samples, Time:", time_test( mc_int2, (2,5,5,2,100) ) )
-print("Int 0, 1000 Samples, Acc:", acc_test( mc_int0, (2,5,5,2,1000) ) )
+print("Int 3, 100 Samples, Time:", time_test( mc_int3, (2,5,5,2,100) ) )
+#print("Int 0, 1000 Samples, Acc:", acc_test( mc_int0, (2,5,5,2,1000) ) )
 print("Int 2, 100 Samples, Acc:", acc_test( mc_int2, (2,5,5,2,100) ) )
+print("Int 3, 100 Samples, Acc:", acc_test( mc_int3, (2,5,5,2,100) ) )
 '''
 ## Plotting (but not scheming)
 plt.hist(x=J_est_list, bins='auto')

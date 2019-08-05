@@ -2,7 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as st
 from scipy.stats import beta
+
 from scipy.integrate import quad
+import ghalton
 
 import time
 import argparse
@@ -22,18 +24,8 @@ class Rhomax_dist(st.rv_continuous):
         return beta.pdf(x,a1,b1)*beta.cdf(x,a2,b2)+beta.pdf(x,a2,b2)*beta.cdf(x,a1,b1)
    
     
-'''
-# Probability distribution over max probability; treated as distribution
-def Rhomax_dist(a1, a2, b1, b2):
-    x = Symbol('x')
-    
-    func = lambda p: beta.pdf(p,a1,b1)*beta.cdf(p,a2,b2)+beta.pdf(p,a2,b2)*beta.cdf(p,a1,b1)
-    
-    return ContinuousRV(x, func(x), Interval(0,1))
-'''
-    
 # Probability distribution over max probability
-def Rhomax(x, a1, a2, b1, b2):
+def rhomax_integrand(x, a1, a2, b1, b2):
     # Takes numbers and returns a prob. number
     
     pdf1 = beta.pdf(x,a1,b1)
@@ -43,8 +35,10 @@ def Rhomax(x, a1, a2, b1, b2):
     
     rho = pdf1 * cdf2 + pdf2 * cdf1
     
-    return rho
+    integrand = -rho * np.log( rho )
+    return integrand
 
+'''
 # Vectorized version of above (probably not useful)
 def Rhomax_vectorized(x, beta_params):
     # Takes full beta_params and returns an array (over batch)
@@ -62,7 +56,8 @@ def Rhomax_vectorized(x, beta_params):
     rho = pdf1 * cdf2 + pdf2 * cdf1
     
     return rho
-    
+'''
+
 # Posterior distribution over outcome given posterior over probs.
 def Prob(x, a, b):
     # Takes x = 0 or 1 and a,b = numbers; returns a prob. number
@@ -86,31 +81,20 @@ def Prob(x, a, b):
 def Entropy_int(a1, a2, b1, b2):
     # Takes numbers and returns a number
     
-    integrand = lambda p: -Rhomax(p, a1, a2, b1, b2) * np.log(Rhomax(p, a1, a2, b1, b2))
-    
-    integral = quad(integrand, 0, 1)[0]
-    
+    integrand = lambda p: rhomax_integrand(p, a1,a2,b1,b2)    
+    integral = quad(integrand, 0, 1)[0]    
     return integral
-    
+
+
 # Estimate entropy via sampling
-def Entropy_est(a1, a2, b1, b2):
-    N_disc = 2 # Number of discrete points
-    N_sample = 100000 # Number of samples
-    
-    # Rhomax distribution
-    entropy_dist = np.vectorize(lambda p: Rhomax(p, a1, a2, b1, b2))
-    
-    # Discretize
-    entropy_dist_disc = entropy_dist(np.linspace(0,1,N_disc+2)[1:-1]) # Rhomax
-    # Normalize
-    entropy_dist_disc = entropy_dist_disc/np.sum(entropy_dist_disc)
-    
-    entropy_val_disc = -np.log(entropy_dist_disc) # -log Rhomax
-    
-    # Sample from the distribution
-    sample_points = np.random.choice(entropy_val_disc, N_sample, p=entropy_dist_disc)
-    
-    return np.mean(sample_points)
+seq = ghalton.Halton(1)
+def Entropy_est(a1, a2, b1, b2, samples=100):
+    seq.reset()
+    x = seq.get(samples)
+    x = np.reshape(x, samples)
+    integral = np.mean( rhomax_integrand(x,a1,a2,b1,b2) )
+    return integral
+
 
 # Main function ---------------------------------------------------------------------------------
 
@@ -221,11 +205,13 @@ def main(args):
                 t1 = t2
                 
     t_end = time.time()
+        
+    output = {'cum_reward':cum_reward, 'cum_subopt':cum_subopt, 'beta_params':beta_params, 'plays': plays}
+
     if verbose:
         print('Total runtime: ' + str(t_end-t_start) + ' s')
-    
-    output = {'cum_reward':cum_reward, 'cum_subopt':cum_subopt, 'beta_params':beta_params, 'plays': plays}
-    
+        print("Cumulative Reward:", cum_reward[0][-1])
+        
     return output
     
 # Plotting functions ----------------------------------------------------------------------------

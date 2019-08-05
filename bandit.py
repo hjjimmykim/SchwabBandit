@@ -7,6 +7,7 @@ from scipy.integrate import quad
 import ghalton
 
 import time
+import datetime
 import argparse
 import pickle
 
@@ -238,7 +239,7 @@ def plot_beta(x, a1, a2, b1, b2, p1, p2, n, name, savefig):
         plt.show()
         
 # Plot regret
-def plot_regret(plays, c_mean, p1, p2, N, name, savefig):
+def plot_regret(plays, c_mean, p1, p2, N, name, savefig, savedata):
     plt.figure()
     # Optimal expected number of suboptimal plays (Lai-Robbins lower bound)
     LB = np.log(plays)/KLdivergence(p1,p2)
@@ -254,6 +255,12 @@ def plot_regret(plays, c_mean, p1, p2, N, name, savefig):
     plt.xlabel('Total number of plays')
     plt.ylabel(r'Regret $<n_2>(p_1-p_2)$')
     plt.title('Regret averaged over ' + str(N) + ' replicas')
+    if savedata:
+        savePath = 'Save/'
+        save_time = datetime.datetime.today().strftime('%Y-%m-%d_%H:%M')
+        pickle_name = save_time + '.pkl'
+        with open(savePath + pickle_name, 'wb') as f:
+            pickle.dump(regret_act, f)
     if savefig:
         plt.savefig('regret_' + name + '.png')
         plt.close()
@@ -273,6 +280,7 @@ if __name__ == "__main__":
     parser.add_argument("--algo", default='Thompson', type=str, help="Decision algorithm; 'Thompson', 'Infomax'")
     parser.add_argument("--seed", default=111, type=int, help="Random seed")
     parser.add_argument("--savefig", default=0, type=int, help="Save figures")
+    parser.add_argument("--savedata", default=0, type=int, help="Save regret data")
     parser.add_argument("--verbose", default=0, type=int, help="Print messages")
     
     args = parser.parse_args()
@@ -304,4 +312,4 @@ if __name__ == "__main__":
     plot_beta(x,b[0,0,0],b[0,0,1],b[0,1,0],b[0,1,1],args.p1,args.p2,args.n,name,args.savefig)
 
     # Plot regret -------------------------------------------------------------------------------
-    plot_regret(plays,c_mean,args.p1,args.p2,args.N,name,args.savefig)
+    plot_regret(plays,c_mean,args.p1,args.p2,args.N,name,args.savefig, args.savedata)

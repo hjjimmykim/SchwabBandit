@@ -16,15 +16,8 @@ import pickle
 # KL-divergence
 def KLdivergence(p,q):
     # Takes two probability numbers and returns a number
-    
     return p*np.log(p/q) + (1-p)*np.log((1-p)/(1-q))
-'''    
-# Probability distribution over max probability; treated as distribution
-class Rhomax_dist(st.rv_continuous):
-    def _pdf(self, x, a1,a2,b1,b2):
-        return beta.pdf(x,a1,b1)*beta.cdf(x,a2,b2)+beta.pdf(x,a2,b2)*beta.cdf(x,a1,b1)
-'''   
-    
+
 # Probability distribution over max probability
 def rhomax_integrand(x, a1, a2, b1, b2):
     # Takes numbers and returns a prob. number
@@ -39,54 +32,15 @@ def rhomax_integrand(x, a1, a2, b1, b2):
     integrand = -rho * np.log( rho )
     return integrand
 
-'''
-# Vectorized version of above (probably not useful)
-def Rhomax_vectorized(x, beta_params):
-    # Takes full beta_params and returns an array (over batch)
-    
-    a1 = beta_params[:,0,0] # alpha for arm 0
-    b1 = beta_params[:,1,0] # beta for arm 0
-    a2 = beta_params[:,0,1] # alpha for arm 1
-    b2 = beta_params[:,1,1] # beta for arm 1
-    
-    pdf1 = beta.pdf(x,a1,b1)
-    pdf2 = beta.pdf(x,a2,b2)
-    cdf1 = beta.cdf(x,a1,b1)
-    cdf2 = beta.cdf(x,a2,b2)
-    
-    rho = pdf1 * cdf2 + pdf2 * cdf1
-    
-    return rho
-'''
 
 # Posterior distribution over outcome given posterior over probs.
 def Prob(x, a, b):
     # Takes x = 0 or 1 and a,b = numbers; returns a prob. number
-    
-    '''
-    if x == 1: # Success
-        integrand = lambda p: beta.pdf(p,a,b) * p
-    elif x == 0:
-        integrand = lambda p: beta.pdf(p,a,b) * (1-p)
-        
-    integral = quad(integrand, 0, 1)[0]
-    return integral
-    '''
-    
     if x == 1: # Success
         return a/(a+b)
     elif x == 0:
         return b/(a+b)
         
-# Differential entropy over max probability
-def Entropy_int(a1, a2, b1, b2):
-    # Takes numbers and returns a number
-    
-    integrand = lambda p: rhomax_integrand(p, a1,a2,b1,b2)    
-    integral = quad(integrand, 0, 1)[0]    
-    return integral
-
-
 # Estimate entropy via sampling
 seq = ghalton.Halton(1)
 def Entropy_est(a1, a2, b1, b2, samples=100):

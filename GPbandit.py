@@ -18,20 +18,6 @@ def KLdivergence(p,q):
     # Takes two probability numbers and returns a number
     return p*np.log(p/q) + (1-p)*np.log((1-p)/(1-q))
 
-# Probability distribution over max probability
-def rhomax_integrand(x, a1, a2, b1, b2):
-    # Takes numbers and returns a prob. number
-    
-    pdf1 = beta.pdf(x,a1,b1)
-    pdf2 = beta.pdf(x,a2,b2)
-    cdf1 = beta.cdf(x,a1,b1)
-    cdf2 = beta.cdf(x,a2,b2)
-    
-    rho = pdf1 * cdf2 + pdf2 * cdf1
-    
-    integrand = -rho * np.log( rho )
-    return integrand
-
 
 # Posterior distribution over outcome given posterior over probs.
 def Prob(x, a, b):
@@ -49,6 +35,13 @@ def Entropy_est(a1, a2, b1, b2, samples=100):
     x = np.reshape(x, samples)
     integral = np.mean( rhomax_integrand(x,a1,a2,b1,b2) )
     return integral
+
+
+# Gaussian Process
+def kernel(x, y, params):
+    return params[0] * np.exp( -0.5 * params[1] * np.subtract.outer(x, y)**2 )
+
+def conditional():
 
 
 # Main function ---------------------------------------------------------------------------------

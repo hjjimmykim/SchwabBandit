@@ -1,9 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as st
-from scipy.stats import beta
+#from scipy.stats import beta
 
-from scipy.integrate import quad
+#from scipy.integrate import quad
 import ghalton
 
 import time
@@ -11,23 +11,33 @@ import datetime
 import argparse
 import pickle
 
-# Information Theory Functions ------------------------------------------------------------------
 
-# KL-divergence
-def KLdivergence(p,q):
-    # Takes two probability numbers and returns a number
-    return p*np.log(p/q) + (1-p)*np.log((1-p)/(1-q))
+## Gaussian Process --------------------
+def kernel(x, y, params):
+# kernel function
+    return params[0] * np.exp( -0.5 * params[1] * np.subtract.outer(x, y)**2 )
+
+def conditional(x_new, x, y, params):
+# Prob of test data conditioned on training data
+    A = kernel(x_new, x_new, params)
+    B = kernel(x_new, x, params)
+    C = kernel(x, x, params)
+
+    mu = np.linalg.inv(C).dot(B.T).T.dot(y)
+    sigma = A - B.dot(np.linalg.inv(C).dot(B.T) )
+
+    return( mu.squeeze(), sigma.squeeze() )
+
+def predict(x, data, params, sigma, t):
+# return predicted value and its std
+    k = [ kernel(x, y, params) for y in data ]
+    sig_inv = np.linalg.inv(sigma)
+    y_pred = np.dot(k, sig_inv).dot(t)
+    sigma_new = kernel(x, x, params) - np.dot(k, sig_inv).dot(k)
+    return y_pred, sigma_new
 
 
-# Posterior distribution over outcome given posterior over probs.
-def Prob(x, a, b):
-    # Takes x = 0 or 1 and a,b = numbers; returns a prob. number
-    if x == 1: # Success
-        return a/(a+b)
-    elif x == 0:
-        return b/(a+b)
-        
-# Estimate entropy via sampling
+# Entropy calculation (quasi-random Monte Carlo)
 seq = ghalton.Halton(1)
 def Entropy_est(a1, a2, b1, b2, samples=100):
     seq.reset()
@@ -36,12 +46,15 @@ def Entropy_est(a1, a2, b1, b2, samples=100):
     integral = np.mean( rhomax_integrand(x,a1,a2,b1,b2) )
     return integral
 
-
-# Gaussian Process
-def kernel(x, y, params):
-    return params[0] * np.exp( -0.5 * params[1] * np.subtract.outer(x, y)**2 )
-
-def conditional():
+def rho_max(state, mem0, mem1, params, num_samp=100):
+    # memi = past sets of (mu0, mu1, r)
+    seq.reset()
+    r_samp = seq.get(num_samp)
+    r_samp = np.reshape(r_samp, num_samp)
+    # Arm 0
+    sigma0 = kernel(mem0[:][0,2], mem0[:][0,2], params) # covariance of arm 0 training data
+    P0 = predict(state, mem0[:][0,2], params, mem0[:][-1] )
+    Intg1 = np.mean(predict(state, mem1[:]) )
 
 
 # Main function ---------------------------------------------------------------------------------
@@ -53,7 +66,6 @@ def main(args):
     n = args.n              # Total number of plays
     N = args.N              # Batch/replicas (for averaging)
     n_rec = args.n_rec      # Record every n plays
-    algo = args.algo        # 'Thompson', 'Infomax'
     seed = args.seed        # Random seed
     verbose = args.verbose  # Print messages (time)
     
@@ -70,28 +82,15 @@ def main(args):
     cum_subopt = np.zeros([N,int(n/n_rec)]) # Record number of suboptimal plays
     plays = np.zeros(int(n/n_rec))
     
-    # Setup
-    if algo == 'Thompson':
-        # Initialize beta distribution parameters
-        # beta_params_(batch, {alpha,beta}, arm)
-        # 0.5 = uninformative prior, 1 = uniform prior
-        beta_params = 1*np.ones([N,2,2]) # [[[a1,a2],[b1,b2]], ...]
-    elif algo in ['Infomax', 'Infomax_est']:
-        beta_params = 1*np.ones([N,2,2])
-        if algo == 'Infomax':
-            Entropy = Entropy_int
-        elif algo == 'Infomax_est':
-            Entropy = Entropy_est
-    
     # Simulation
     t_start = time.time()
     t1 = time.time()
+
+    state_mem = np.array([])
+
     for t in range(n):
     
         # Choose arm
-        if algo == 'Thompson':
-            theta = np.random.beta(beta_params[:,0,:],beta_params[:,1,:]) # [batch, arm]
-            action = np.argmax(theta,1) # Choose the arm corresponding to the optimal draw (N-array)
         elif algo in ['Infomax', 'Infomax_est']:
             action = np.zeros(N, dtype = np.int8)
             for i in range(N): # Loop through batch
@@ -138,13 +137,6 @@ def main(args):
             cum_reward[:,int(t/n_rec)] = curr_cum_reward
             plays[int(t/n_rec)] = t+1
             
-        # Update parameters
-        if algo in ['Thompson', 'Infomax', 'Infomax_est']: # Same posterior updates for both
-            # Update a
-            beta_params[:,0,:][np.arange(N),action] += r
-            # Update b
-            beta_params[:,1,:][np.arange(N),action] += 1-r
-        
         # Time
         if verbose:
             if (t+1) % int(n/10) == 0:
@@ -162,39 +154,12 @@ def main(args):
         
     return output
     
-# Plotting functions ----------------------------------------------------------------------------
-    
-# Plot learned beta distribution
-def plot_beta(x, a1, a2, b1, b2, p1, p2, n, name, savefig):
-    # ai, bi's = beta distribution parameters for each arm
-    
-    plt.figure()
-    beta1 = beta.pdf(x, a1, b1)
-    beta2 = beta.pdf(x, a2, b2)
-    plt.plot(x, beta1, 'r', linewidth=3, label='Superior arm')
-    plt.plot(x, beta2, 'b', linewidth=3, label='Inferior arm')
-    plt.axvline(x=p1,color='r', linewidth=1, linestyle='--')
-    plt.axvline(x=p2,color='b', linewidth=1, linestyle='--')
-    plt.legend(loc='best')
-    plt.xlabel(r'$\theta$')
-    plt.ylabel(r'$p(\theta)$')
-    plt.title('Learned beta distributions for each arm after ' + str(n) + ' plays')
-    if savefig:
-        plt.savefig('beta_distribution_' + name + '.png')
-        plt.close()
-    else:
-        plt.show()
-        
+# Plotting functions ---------------------------------------------------------------------------- 
 # Plot regret
 def plot_regret(plays, c_mean, p1, p2, N, name, savefig, savedata, algo):
     plt.figure()
-    # Optimal expected number of suboptimal plays (Lai-Robbins lower bound)
-    LB = np.log(plays)/KLdivergence(p1,p2)
-    # Optimal regret
-    regret_opt = np.maximum(LB * (p1 - p2)-20, np.zeros(LB.shape))
     # Actual regret
     regret_act = c_mean * (p1 - p2)
-    plt.plot(plays, regret_opt, 'k', linewidth=3, label='Lai-Robbins bound slope')
     plt.plot(plays, regret_act, 'r', linewidth=3, label=algo)
     plt.legend(loc='best')
     plt.gca().set_xscale('log',basex=10)
@@ -224,13 +189,14 @@ if __name__ == "__main__":
     parser.add_argument("--n", default=1000, type=int, help="Total number of plays")
     parser.add_argument("--N", default=1, type=int, help="Replicas (For averaging)")
     parser.add_argument("--n_rec", default=1, type=int, help="Record every n plays")
-    parser.add_argument("--algo", default='Thompson', type=str, help="Decision algorithm; 'Thompson', 'Infomax'")
     parser.add_argument("--seed", default=111, type=int, help="Random seed")
     parser.add_argument("--savefig", default=0, type=int, help="Save figures")
     parser.add_argument("--savedata", default=0, type=int, help="Save regret data")
     parser.add_argument("--verbose", default=0, type=int, help="Print messages")
     
     args = parser.parse_args()
+
+    algo == 'GP-Infomax'
 
     # Run main function -------------------------------------------------------------------------
     output = main(args)
@@ -242,7 +208,6 @@ if __name__ == "__main__":
             '_n=' + str(args.n) + \
             '_N=' + str(args.N) + \
             '_n_rec=' + str(args.n_rec) + \
-            '_algo=' + str(args.algo) + \
             '_seed=' + str(args.seed)
                 
     #pickle.dump(output, open(name + '.pickle',"wb"))
@@ -259,4 +224,4 @@ if __name__ == "__main__":
     plot_beta(x,b[0,0,0],b[0,0,1],b[0,1,0],b[0,1,1],args.p1,args.p2,args.n,name,args.savefig)
 
     # Plot regret -------------------------------------------------------------------------------
-    plot_regret(plays,c_mean,args.p1,args.p2,args.N,name,args.savefig, args.savedata, args.algo)
+    plot_regret(plays,c_mean,args.p1,args.p2,args.N,name,args.savefig, args.savedata, algo)

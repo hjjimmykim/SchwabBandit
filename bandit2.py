@@ -11,36 +11,56 @@ import datetime
 import argparse
 import pickle
 
-# KL-divergence
-def KLdivergence(p,q):
-    # Takes two probability numbers and returns a number
-    return p*np.log(p/q) + (1-p)*np.log((1-p)/(1-q))
-
-
 # Posterior distribution over outcome given posterior over probs.
-def Prob(x, a, b):
+def Beta_Post(outcome, a, b):
     # Takes x = 0 or 1 and a,b = numbers; returns a prob. number
-    if x == 1: # Success
+    if outcome:
         return a/(a+b)
-    elif x == 0:
+    else:
         return b/(a+b)
-
 
 # Estimate rhomax entropy via sampling
 seq = ghalton.Halton(1)
-def Beta_Entropy(a1, a2, b1, b2, samples=100):
+def Beta_Entropy(a0, b0, a1, b1, samples=1000):
     seq.reset()
     x = seq.get(samples)
     x = np.reshape(x, samples)
 
+    pdf0 = beta.pdf(x,a0,b0)
     pdf1 = beta.pdf(x,a1,b1)
-    pdf2 = beta.pdf(x,a2,b2)
+    cdf0 = beta.cdf(x,a0,b0)
     cdf1 = beta.cdf(x,a1,b1)
-    cdf2 = beta.cdf(x,a2,b2)
     
-    rho = pdf1 * cdf2 + pdf2 * cdf1
+    rho = pdf0 * cdf1 + pdf1 * cdf0
     integral = np.mean( -rho * np.log( rho ) )
     return integral
+
+
+def Beta_Action(params, N):
+    # params dim: batch, beta params (2), arm
+    action = np.zeros(N, dtype = np.int8)
+    for i in range(N): # Loop through batch
+        a0, b0 = params[i,:,0] # Arm 0
+        a1, b1 = params[i,:,1] # Arm 1
+            
+	## Arm 0 Pulled
+        # Difference in entropy when 0 (failure) observed
+        dH0_0 = Beta_Entropy(a0, b0+1, a1, b1)
+        # Difference in entropy when 1 (success) observed
+        dH0_1 = Beta_Entropy(a0+1, b0, a1, b1)
+        # Expected decrease in entropy
+        dH0 = Beta_Post(False,a0,b0)*dH0_0 + Beta_Post(True,a0,b0)*dH0_1
+                
+        ## Arm 1 Pulled
+        # Difference in entropy when 0 (failure) observed
+        dH1_0 = Beta_Entropy(a0, b0, a1, b1+1)
+        # Difference in entropy when 1 (success) observed
+        dH1_1 = Beta_Entropy(a0, b0, a1+1, b1)
+        # Expected decrease in entropy
+        dH1 = Beta_Post(False,a1,b1)*dH1_0 + Beta_Post(True,a1,b1)*dH1_1
+                
+        action[i] = int(dH0 > dH1) # pick action that decreases H more (i.e. dH more negative)
+    return action
 
 
 
@@ -48,20 +68,15 @@ def main(args):
     # Input unpacking
     p1 = args.p1            # Success probability of the first arm
     p2 = args.p2            # Success probability of the second arm
+    p = np.array([p1,p2])   # Prob. of arms
     n = args.n              # Total number of plays
     N = args.N              # Batch/replicas (for averaging)
     n_rec = args.n_rec      # Record every n plays
     algo = args.algo        # 'Thompson', 'Infomax'
     seed = args.seed        # Random seed
-    verbose = args.verbose  # Print messages (time)
     
     # Set random seed
     np.random.seed(seed)
-    
-    # Parameters
-    p = np.array([p1,p2])             # Prob. of arms
-    beta_params = 1*np.ones([N,2,2])
-    print("beta_params:", beta_params)
         
     # Output initialization
     curr_cum_reward = np.zeros(N)
@@ -70,9 +85,9 @@ def main(args):
     cum_subopt = np.zeros([N,int(n/n_rec)]) # Record number of suboptimal plays
     plays = np.zeros(int(n/n_rec))
     
-    # Entropy Estimation Method
+    # Setup Algorithm
     if algo == 'Beta':
-        Entropy = Beta_Entropy
+        beta_params = np.ones([N,2,2])
     #elif algo == 'Gauss':
     
     # Simulation
@@ -80,30 +95,9 @@ def main(args):
     t1 = time.time()
     for t in range(n):
     
-        # Choose arm
-        action = np.zeros(N, dtype = np.int8)
-        for i in range(N): # Loop through batch
-            a0, b0 = beta_params[i,:,0] # Arm 0
-            a1, b1 = beta_params[i,:,1] # Arm 1
-                
-	    # If Arm 0 Pulled
-            # Difference in entropy when 0 (failure) observed
-            delH0_0 = Entropy(a0, a1, b0 + 1, b1) #- Entropy0
-            # Difference in entropy when 1 (success) observed
-            delH0_1 = Entropy(a0 + 1, a1, b0, b1) #- Entropy0
-            # Expected decrease in entropy
-            dH0 = Prob(0,a0,b0)*delH0_0 + Prob(1,a0,b0)*delH0_1
-                
-            # If Arm 1 Pulled
-            # Difference in entropy when 0 (failure) observed
-            delH1_0 = Entropy(a0, a1, b0, b1 + 1) #- Entropy0
-            # Difference in entropy when 1 (success) observed
-            delH1_1 = Entropy(a0, a1 + 1, b0, b1) #- Entropy0
-            # Expected decrease in entropy
-            dH1 = Prob(0,a1,b1)*delH1_0 + Prob(1,a1,b1)*delH1_1
-                
-            action[i] = int(dH0 > dH1) # pick action that decreases H more (i.e. dH more negative)
-            
+        # Choose action
+        if algo == 'Beta':
+            action = Beta_Action(beta_params, N)
 	
         # Record suboptimal plays
         curr_cum_subopt += action # Default Arm 1 is suboptimal
@@ -122,13 +116,14 @@ def main(args):
             plays[int(t/n_rec)] = t+1
             
         # Update parameters
-        # Update a
-        beta_params[:,0,:][np.arange(N),action] += r
-        # Update b
-        beta_params[:,1,:][np.arange(N),action] += 1-r
+        if algo == 'Beta':
+            # Update a's
+            beta_params[:,0][np.arange(N),action] += r
+            # Update b's
+            beta_params[:,1][np.arange(N),action] += 1-r
         
         # Time
-        if verbose and (t+1) % int(n/10) == 0:
+        if args.v and (t+1) % int(n/10) == 0:
             t2 = time.time()
             print('Runtime for plays ' + str(t-(int(n/10)-1)) + ' - ' + str(t) + ': ' + str(t2-t1) + ' s')
             t1 = t2
@@ -137,9 +132,10 @@ def main(args):
         
     output = {'cum_reward':cum_reward, 'cum_subopt':cum_subopt, 'beta_params':beta_params, 'plays': plays}
 
-    if verbose:
+    if args.v:
         print('Total runtime: ' + str(t_end-t_start) + ' s')
-        print("Cumulative Reward:", cum_reward[0][-1])
+        print("Mean Total Reward:", np.mean(cum_reward[:,-1]) )
+        print("Mean Suboptimal Plays:", np.mean(cum_subopt[:,-1]) )
         
     return output
     
@@ -169,13 +165,8 @@ def plot_beta(x, a1, a2, b1, b2, p1, p2, n, name, savefig):
 # Plot regret
 def plot_regret(plays, c_mean, p1, p2, N, name, savefig, savedata, algo):
     plt.figure()
-    # Optimal expected number of suboptimal plays (Lai-Robbins lower bound)
-    LB = np.log(plays)/KLdivergence(p1,p2)
-    # Optimal regret
-    regret_opt = np.maximum(LB * (p1 - p2)-20, np.zeros(LB.shape))
     # Actual regret
     regret_act = c_mean * (p1 - p2)
-    plt.plot(plays, regret_opt, 'k', linewidth=3, label='Lai-Robbins bound slope')
     plt.plot(plays, regret_act, 'r', linewidth=3, label=algo)
     plt.legend(loc='best')
     plt.gca().set_xscale('log',basex=10)
@@ -206,9 +197,9 @@ if __name__ == "__main__":
     parser.add_argument("--n_rec", default=1, type=int, help="Record every n plays")
     parser.add_argument("--algo", default='Beta', type=str, help="Reward probability model: 'Beta' or 'Gauss'")
     parser.add_argument("--seed", default=111, type=int, help="Random seed")
-    parser.add_argument("--savefig", default=0, type=int, help="Save figures")
-    parser.add_argument("--savedata", default=0, type=int, help="Save regret data")
-    parser.add_argument("--verbose", default=0, type=int, help="Print messages")
+    parser.add_argument("--savefig", action = "store_true", help="Save figures")
+    parser.add_argument("--savedata", action = "store_true", help="Save regret data")
+    parser.add_argument("-v", action = "store_true", help="Print messages")
     
     args = parser.parse_args()
 
@@ -240,10 +231,10 @@ if __name__ == "__main__":
     c = output['cum_subopt']
     plays = output['plays']
     c_mean = np.mean(c,0) # Take average over batches
-
+    
     # Plot beta distribution --------------------------------------------------------------------
-    x = np.linspace(0,1,1000) # Parameter space [0,1]
-    plot_beta(x,b[0,0,0],b[0,0,1],b[0,1,0],b[0,1,1], args.p1, args.p2, args.n, filename, args.savefig)
-
+    #x = np.linspace(0,1,1000) # Parameter space [0,1]
+    #plot_beta(x,b[0,0,0],b[0,0,1],b[0,1,0],b[0,1,1], args.p1, args.p2, args.n, filename, args.savefig)
+    
     # Plot regret -------------------------------------------------------------------------------
     plot_regret(plays, c_mean, args.p1, args.p2, args.N, filename, args.savefig, args.savedata, args.algo)

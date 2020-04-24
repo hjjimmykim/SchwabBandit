@@ -1,9 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as st
-from scipy.stats import beta
+from scipy.stats import beta, norm
 
-from scipy.integrate import quad
 import ghalton
 
 import time
@@ -11,57 +10,104 @@ import datetime
 import argparse
 import pickle
 
-# Posterior distribution over outcome given posterior over probs.
-def Beta_Post(outcome, a, b):
-    # Takes x = 0 or 1 and a,b = numbers; returns a prob. number
-    if outcome:
-        return a/(a+b)
-    else:
-        return b/(a+b)
 
-# Estimate rhomax entropy via sampling
+## Estimate rhomax entropy via sampling
 seq = ghalton.Halton(1)
-def Beta_Entropy(a0, b0, a1, b1, samples=1000):
+MC_samples = 100    # default number of samples for MC integration
+def Beta_Entropy(w0, l0, w1, l1):
+    global MC_samples
     seq.reset()
-    x = seq.get(samples)
-    x = np.reshape(x, samples)
+    x = seq.get(MC_samples)
+    x = np.reshape(x, MC_samples)
 
-    pdf0 = beta.pdf(x,a0,b0)
-    pdf1 = beta.pdf(x,a1,b1)
-    cdf0 = beta.cdf(x,a0,b0)
-    cdf1 = beta.cdf(x,a1,b1)
+    pdf0 = beta.pdf(x, w0+1, l0+1)
+    pdf1 = beta.pdf(x, w1+1, l1+1)
+    cdf0 = beta.cdf(x, w0+1, l0+1)
+    cdf1 = beta.cdf(x, w1+1, l1+1)
     
     rho = pdf0 * cdf1 + pdf1 * cdf0
     integral = np.mean( -rho * np.log( rho ) )
+
+    return integral
+
+def Gauss_Entropy(w0, l0, w1, l1):
+    mu0 = (w0 + 1)/(w0 + l0 + 2)    # Expectation of beta
+    sig0 = np.sqrt( (w0+1)*(l0+1)/( (w0+l0+2)**2 * (w0+l0+3) ) )    # Std of beta
+    mu1 = (w1 + 1)/(w1 + l1 + 2)
+    sig1 = np.sqrt( (w1+1)*(l1+1)/( (w1+l1+2)**2 * (w1+l1+3) ) )
+
+    global MC_samples
+    seq.reset()
+    x = seq.get(MC_samples)
+    x = np.reshape(x, MC_samples)
+
+    pdf0 = norm.pdf(x, mu0, sig0)
+    pdf1 = norm.pdf(x, mu1, sig1)
+    cdf0 = norm.cdf(x, mu0, sig0)
+    cdf1 = norm.cdf(x, mu1, sig1)
+
+    rho = pdf0 * cdf1 + pdf1 * cdf0
+    integral = np.mean( -rho * np.log( rho ) )
+
     return integral
 
 
-def Beta_Action(params, N):
-    # params dim: batch, beta params (2), arm
+## Evidence functions
+def Beta_P(outcome, w, l):
+    if outcome:
+        return (w+1)/(w+l+2)
+    else:
+        return (l+1)/(w+l+2)
+
+def Gauss_P(outcome, w, l):
+    mu = (w + 1)/(w + l + 2)
+    sig = np.sqrt( (w+1)*(l+1)/( (w+l+2)**2 * (w+l+3) ) )
+
+    global MC_samples
+    seq.reset()
+    p = seq.get(MC_samples)
+    p = np.reshape(p, MC_samples)
+
+    likelihood = p**outcome * (1-p)**(1-outcome)
+    prior = norm.pdf(p, mu, sig)
+    evidence = np.mean( likelihood * prior )
+
+    return evidence
+
+
+def choose_arm(results, N, algo):
+    if algo == 'Beta':
+        Entropy = Beta_Entropy
+        Evidence = Beta_P
+    else:
+        Entropy = Gauss_Entropy
+        Evidence = Gauss_P
+
     action = np.zeros(N, dtype = np.int8)
+    
     for i in range(N): # Loop through batch
-        a0, b0 = params[i,:,0] # Arm 0
-        a1, b1 = params[i,:,1] # Arm 1
-            
-	## Arm 0 Pulled
-        # Difference in entropy when 0 (failure) observed
-        dH0_0 = Beta_Entropy(a0, b0+1, a1, b1)
-        # Difference in entropy when 1 (success) observed
-        dH0_1 = Beta_Entropy(a0+1, b0, a1, b1)
+        w0, l0 = results[i,:,0] # Arm 0
+        w1, l1 = results[i,:,1] # Arm 1
+
+	    ## Arm 0 Pulled
+        # 0 (failure) observed
+        H0_0 = Entropy(w0, l0+1, w1, l1)
+        # 1 (success) observed
+        H0_1 = Entropy(w0+1, l0, w1, l1)
         # Expected decrease in entropy
-        dH0 = Beta_Post(False,a0,b0)*dH0_0 + Beta_Post(True,a0,b0)*dH0_1
+        dH0 = Evidence(0, w0, l0) * H0_0 + Evidence(1, w0, l0) * H0_1
                 
         ## Arm 1 Pulled
-        # Difference in entropy when 0 (failure) observed
-        dH1_0 = Beta_Entropy(a0, b0, a1, b1+1)
-        # Difference in entropy when 1 (success) observed
-        dH1_1 = Beta_Entropy(a0, b0, a1+1, b1)
+        # 0 (failure) observed
+        H1_0 = Entropy(w0, l0, w1, l1+1)
+        # 1 (success) observed
+        H1_1 = Entropy(w0, l0, w1+1, l1)
         # Expected decrease in entropy
-        dH1 = Beta_Post(False,a1,b1)*dH1_0 + Beta_Post(True,a1,b1)*dH1_1
+        dH1 = Evidence(0, w1, l1) * H1_0 + Evidence(1, w1, l1) * H1_1
                 
         action[i] = int(dH0 > dH1) # pick action that decreases H more (i.e. dH more negative)
-    return action
 
+    return action
 
 
 def main(args):
@@ -85,10 +131,8 @@ def main(args):
     cum_subopt = np.zeros([N,int(n/n_rec)]) # Record number of suboptimal plays
     plays = np.zeros(int(n/n_rec))
     
-    # Setup Algorithm
-    if algo == 'Beta':
-        beta_params = np.ones([N,2,2])
-    #elif algo == 'Gauss':
+    # Setup Parameters (dim: batch, results, arm)
+    results_array = np.zeros([N,2,2])
     
     # Simulation
     t_start = time.time()
@@ -96,8 +140,7 @@ def main(args):
     for t in range(n):
     
         # Choose action
-        if algo == 'Beta':
-            action = Beta_Action(beta_params, N)
+        action = choose_arm(results_array, N, algo)
 	
         # Record suboptimal plays
         curr_cum_subopt += action # Default Arm 1 is suboptimal
@@ -116,11 +159,10 @@ def main(args):
             plays[int(t/n_rec)] = t+1
             
         # Update parameters
-        if algo == 'Beta':
-            # Update a's
-            beta_params[:,0][np.arange(N),action] += r
-            # Update b's
-            beta_params[:,1][np.arange(N),action] += 1-r
+        # Update wins
+        results_array[:,0][np.arange(N),action] += r
+        # Update losses
+        results_array[:,1][np.arange(N),action] += 1-r
         
         # Time
         if args.v and (t+1) % int(n/10) == 0:
@@ -130,7 +172,7 @@ def main(args):
                 
     t_end = time.time()
         
-    output = {'cum_reward':cum_reward, 'cum_subopt':cum_subopt, 'beta_params':beta_params, 'plays': plays}
+    output = {'cum_reward':cum_reward, 'cum_subopt':cum_subopt, 'results_array':results_array, 'plays': plays}
 
     if args.v:
         print('Total runtime: ' + str(t_end-t_start) + ' s')
@@ -195,6 +237,7 @@ if __name__ == "__main__":
     parser.add_argument("--n", default=1000, type=int, help="Total number of plays")
     parser.add_argument("--N", default=1, type=int, help="Replicas (For averaging)")
     parser.add_argument("--n_rec", default=1, type=int, help="Record every n plays")
+    parser.add_argument("--int_samp", default=100, type=int, help="Number of samples for MC integration")
     parser.add_argument("--algo", default='Beta', type=str, help="Reward probability model: 'Beta' or 'Gauss'")
     parser.add_argument("--seed", default=111, type=int, help="Random seed")
     parser.add_argument("--savefig", action = "store_true", help="Save figures")
@@ -202,6 +245,7 @@ if __name__ == "__main__":
     parser.add_argument("-v", action = "store_true", help="Print messages")
     
     args = parser.parse_args()
+    MC_samples = args.int_samp
 
     # Run main function -------------------------------------------------------------------------
     output = main(args)
@@ -227,7 +271,7 @@ if __name__ == "__main__":
     
     # Extract outputs ---------------------------------------------------------------------------
     a = output['cum_reward']
-    b = output['beta_params']
+    b = output['results_array']
     c = output['cum_subopt']
     plays = output['plays']
     c_mean = np.mean(c,0) # Take average over batches

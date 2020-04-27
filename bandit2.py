@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as st
-from scipy.stats import beta, norm
+from scipy.stats import beta, norm, cauchy
 
 import ghalton
 
@@ -51,6 +51,35 @@ def Gauss_Entropy(w0, l0, w1, l1):
 
     return integral
 
+def Cauchy_Entropy(w0, l0, w1, l1):
+    if w0 == 0 and l0 == 0:
+        x0 = 0.5
+    else:
+        x0 = w0/(w0 + l0)    # Mode of beta
+    sig0 = np.sqrt( (w0+1)*(l0+1)/( (w0+l0+2)**2 * (w0+l0+3) ) )    # Std of beta
+    if w1 == 0 and l1 ==0:
+        x1 = 0.5
+    else:
+        x1 = w1/(w1 + l1)
+    sig1 = np.sqrt( (w1+1)*(l1+1)/( (w1+l1+2)**2 * (w1+l1+3) ) )
+
+    global MC_samples
+    seq.reset()
+    x = seq.get(MC_samples)
+    x = np.reshape(x, MC_samples)
+
+    pdf0 = cauchy.pdf(x, x0, sig0)
+    pdf1 = cauchy.pdf(x, x1, sig1)
+    cdf0 = cauchy.cdf(x, x0, sig0)
+    cdf1 = cauchy.cdf(x, x1, sig1)
+    #norm0 = 1/(cauchy.cdf(1,x0,sig0) - cauchy.cdf(0,x0,sig0) )
+    #norm1 = 1/(cauchy.cdf(1,x1,sig1) - cauchy.cdf(0,x1,sig1) )
+
+    rho = pdf0 * cdf1 + pdf1 * cdf0#norm0 * norm1 * (pdf0 * cdf1 + pdf1 * cdf0)
+    integral = np.mean( -rho * np.log( rho ) )
+
+    return integral
+
 
 ## Evidence functions
 def Beta_P(outcome, w, l):
@@ -74,14 +103,35 @@ def Gauss_P(outcome, w, l):
 
     return evidence
 
+def Cauchy_P(outcome, w, l):
+    if w == 0 and l == 0:
+        x = 0.5
+    else:
+        x = w/(w + l)
+    sig = np.sqrt( (w+1)*(l+1)/( (w+l+2)**2 * (w+l+3) ) )
+
+    global MC_samples
+    seq.reset()
+    p = seq.get(MC_samples)
+    p = np.reshape(p, MC_samples)
+
+    likelihood = p**outcome * (1-p)**(1-outcome)
+    prior = cauchy.pdf(p, x, sig)#/(cauchy.cdf(1,x,sig) - cauchy.cdf(0,x,sig) )
+    evidence = np.mean( likelihood * prior )
+
+    return evidence
+
 
 def choose_arm(results, N, algo):
     if algo == 'Beta':
         Entropy = Beta_Entropy
         Evidence = Beta_P
-    else:
+    elif algo == 'Gauss':
         Entropy = Gauss_Entropy
         Evidence = Gauss_P
+    else:
+        Entropy = Cauchy_Entropy
+        Evidence = Cauchy_P
 
     action = np.zeros(N, dtype = np.int8)
     
@@ -248,6 +298,7 @@ if __name__ == "__main__":
     MC_samples = args.int_samp
 
     # Run main function -------------------------------------------------------------------------
+    print("Algorithm:", args.algo)
     output = main(args)
     
     # Save output -------------------------------------------------------------------------------

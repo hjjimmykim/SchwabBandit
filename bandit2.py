@@ -72,10 +72,24 @@ def Cauchy_Entropy(w0, l0, w1, l1):
     pdf1 = cauchy.pdf(x, x1, sig1)
     cdf0 = cauchy.cdf(x, x0, sig0)
     cdf1 = cauchy.cdf(x, x1, sig1)
-    #norm0 = 1/(cauchy.cdf(1,x0,sig0) - cauchy.cdf(0,x0,sig0) )
-    #norm1 = 1/(cauchy.cdf(1,x1,sig1) - cauchy.cdf(0,x1,sig1) )
 
-    rho = pdf0 * cdf1 + pdf1 * cdf0#norm0 * norm1 * (pdf0 * cdf1 + pdf1 * cdf0)
+    rho = pdf0 * cdf1 + pdf1 * cdf0
+    integral = np.mean( -rho * np.log( rho ) )
+
+    return integral
+
+def Gauss2_Entropy(mu0, sig0, mu1, sig1):
+    global MC_samples
+    seq.reset()
+    x = seq.get(MC_samples)
+    x = np.reshape(x, MC_samples)
+
+    pdf0 = norm.pdf(x, mu0, sig0)
+    pdf1 = norm.pdf(x, mu1, sig1)
+    cdf0 = norm.cdf(x, mu0, sig0)
+    cdf1 = norm.cdf(x, mu1, sig1)
+
+    rho = pdf0 * cdf1 + pdf1 * cdf0
     integral = np.mean( -rho * np.log( rho ) )
 
     return integral
@@ -116,12 +130,21 @@ def Cauchy_P(outcome, w, l):
     p = np.reshape(p, MC_samples)
 
     likelihood = p**outcome * (1-p)**(1-outcome)
-    prior = cauchy.pdf(p, x, sig)#/(cauchy.cdf(1,x,sig) - cauchy.cdf(0,x,sig) )
+    prior = cauchy.pdf(p, x, sig)
     evidence = np.mean( likelihood * prior )
 
     return evidence
 
+def gauss2_evidence(outcome, mu, sig):
+    exponent = sig**2 * outcome**2 + mu**2 + ((sig**2 * outcome + mu)**2)/(sig**2 + 1)
+    return np.exp( -exponent/(2 * sig**2) ) / np.sqrt( 2 * np.pi * (sig**2 + 1) )
+    '''
+    exponent = sig**2 * outcome**2 + s**2 * mu**2 + ((sig**2 * outcome + s**2 * mu)**2)/(sig**2 + s**2)
+    return np.exp( -exponent/(2 * s**2 * sig**2) ) / np.sqrt( 2 * np.pi * (sig**2 + s**2) )
+    '''
 
+
+## Arm Selection 
 def choose_arm(results, N, algo):
     if algo == 'Beta':
         Entropy = Beta_Entropy
@@ -159,6 +182,55 @@ def choose_arm(results, N, algo):
 
     return action
 
+def choose_arm_2(results, prior_params, N):
+    action = np.zeros(N, dtype = np.int8)
+    
+    for i in range(N): # Loop through batch
+        w0, l0 = results[i,:,0] # Arm 0
+        w1, l1 = results[i,:,1] # Arm 1
+
+        mu0, sig0 = prior_params[i,:,0]
+        mu1, sig1 = prior_params[i,:,1]
+
+        '''
+        if w0 == 0 and l0 == 0:
+            s0 = 0.5
+        else:
+            s0 = np.sqrt( (l0 * w0**2 + w0 * l0**2) / ( (l0+w0)**3 ) )
+        if w1 == 0 and l1 == 0:
+            s1 = 0.5
+        else:
+            s1 = np.sqrt( (l1 * w1**2 + w1 * l1**2) / ( (l1+w1)**3 ) )
+        '''
+        s0 = 1
+        s1 = 1
+
+        ## Arm 0 Pulled
+        sig00 = (sig0**2 * s0**2) / (sig0**2 + s0**2)
+        # 0 (failure) observed
+        mu0_0 = (s0**2 * mu0) / (sig0**2 + s0**2)
+        H0_0 = Gauss2_Entropy(mu0_0, sig00, mu1, sig1)
+        # 1 (success) observed
+        mu0_1 = (sig0**2 + s0**2 * mu0) / (sig0**2 + s0**2)
+        H0_1 = Gauss2_Entropy(mu0_1, sig00, mu1, sig1)
+        # Expected decrease in entropy
+        dH0 = gauss2_evidence(0, mu0, sig0) * H0_0 + gauss2_evidence(1, mu0, sig0) * H0_1
+                
+        ## Arm 1 Pulled
+        sig11 = (sig1**2 * s1**2) / (sig1**2 + s1**2)
+        # 0 (failure) observed
+        mu1_0 = (s1**2 * mu1) / (sig1**2 + s1**2)
+        H1_0 = Gauss2_Entropy(mu0, sig0, mu1_0, sig11)
+        # 1 (success) observed
+        mu1_1 = (sig1**2 + s1**2 * mu1) / (sig1**2 + s1**2)
+        H1_1 = Gauss2_Entropy(mu0, sig0, mu1_1, sig11)
+        # Expected decrease in entropy
+        dH1 = gauss2_evidence(0, mu1, sig1) * H1_0 + gauss2_evidence(1, mu1, sig1) * H1_1
+                
+        action[i] = int(dH0 > dH1) # pick action that decreases H more (i.e. dH more negative)
+
+    return action
+
 
 def main(args):
     # Input unpacking
@@ -183,6 +255,10 @@ def main(args):
     
     # Setup Parameters (dim: batch, results, arm)
     results_array = np.zeros([N,2,2])
+    if algo == 'Gauss2':
+        prior_params = np.zeros([N,2,2]) # Batch, params, (mu, sig), arm
+        prior_params[:,0,:] = 0.5 # Initialize mu's
+        prior_params[:,1,:] = 1.0 # Initialize sigma's
     
     # Simulation
     t_start = time.time()
@@ -190,7 +266,10 @@ def main(args):
     for t in range(n):
     
         # Choose action
-        action = choose_arm(results_array, N, algo)
+        if algo != 'Gauss2':
+            action = choose_arm(results_array, N, algo)
+        else:
+            action = choose_arm_2(results_array, prior_params, N)
 	
         # Record suboptimal plays
         curr_cum_subopt += action # Default Arm 1 is suboptimal
@@ -199,7 +278,7 @@ def main(args):
 
         # Play the arm
         chance = np.random.random(N) # Random number between 0 and 1
-        r = (p[action] > chance).astype(int)         # Get reward
+        r = (p[action] > chance).astype(int)    # Get rewards array
         
         # Keep track of cumulative rewards
         curr_cum_reward += r
@@ -213,6 +292,13 @@ def main(args):
         results_array[:,0][np.arange(N),action] += r
         # Update losses
         results_array[:,1][np.arange(N),action] += 1-r
+        # Update prior parameters
+        if algo == 'Gauss2':
+            mus = prior_params[:,0][np.arange(N),action] #Choose mu's for action chosen
+            sigs = prior_params[:,1][np.arange(N),action] + 0.01*np.ones(N) #Choose sigma's for action chosen, add small correction for numeric stability
+            #esses = prior_params[:,2][np.arange(N),action] #Choose s's for action chosen
+            prior_params[:,0][np.arange(N),action] = (sigs**2 * r + mus) / (sigs**2 + 1)
+            prior_params[:,1][np.arange(N),action] = sigs**2 / (sigs**2 + 1)
         
         # Time
         if args.v and (t+1) % int(n/10) == 0:
@@ -228,6 +314,8 @@ def main(args):
         print('Total runtime: ' + str(t_end-t_start) + ' s')
         print("Mean Total Reward:", np.mean(cum_reward[:,-1]) )
         print("Mean Suboptimal Plays:", np.mean(cum_subopt[:,-1]) )
+        if algo == 'Gauss2':
+            print("Player 0 final parameters:", prior_params[0])
         
     return output
     

@@ -25,7 +25,7 @@ def Beta_Entropy(w0, l0, w1, l1):
     cdf0 = beta.cdf(x, w0+1, l0+1)
     cdf1 = beta.cdf(x, w1+1, l1+1)
     
-    rho = pdf0 * cdf1 + pdf1 * cdf0
+    rho = pdf0 * cdf1 + pdf1 * cdf0 + 1E-4
     integral = np.mean( -rho * np.log( rho ) )
 
     return integral
@@ -89,7 +89,7 @@ def Gauss2_Entropy(mu0, sig0, mu1, sig1):
     cdf0 = norm.cdf(x, mu0, sig0)
     cdf1 = norm.cdf(x, mu1, sig1)
 
-    rho = pdf0 * cdf1 + pdf1 * cdf0
+    rho = pdf0 * cdf1 + pdf1 * cdf0 + 1E-4
     integral = np.mean( -rho * np.log( rho ) )
 
     return integral
@@ -177,11 +177,14 @@ def choose_arm(results, N, algo):
         H1_1 = Entropy(w0, l0, w1+1, l1)
         # Expected decrease in entropy
         dH1 = Evidence(0, w1, l1) * H1_0 + Evidence(1, w1, l1) * H1_1
+        #print("dH0-dH1", dH0 - dH1)
                 
         action[i] = int(dH0 > dH1) # pick action that decreases H more (i.e. dH more negative)
 
     return action
 
+s0 = 1
+s1 = 1
 def choose_arm_2(results, prior_params, N):
     action = np.zeros(N, dtype = np.int8)
     
@@ -202,8 +205,6 @@ def choose_arm_2(results, prior_params, N):
         else:
             s1 = np.sqrt( (l1 * w1**2 + w1 * l1**2) / ( (l1+w1)**3 ) )
         '''
-        s0 = 1
-        s1 = 1
 
         ## Arm 0 Pulled
         sig00 = (sig0**2 * s0**2) / (sig0**2 + s0**2)
@@ -226,6 +227,7 @@ def choose_arm_2(results, prior_params, N):
         H1_1 = Gauss2_Entropy(mu0, sig0, mu1_1, sig11)
         # Expected decrease in entropy
         dH1 = gauss2_evidence(0, mu1, sig1) * H1_0 + gauss2_evidence(1, mu1, sig1) * H1_1
+        #print("dH0 - dH1", dH0 - dH1)
                 
         action[i] = int(dH0 > dH1) # pick action that decreases H more (i.e. dH more negative)
 
@@ -241,10 +243,9 @@ def main(args):
     N = args.N              # Batch/replicas (for averaging)
     n_rec = args.n_rec      # Record every n plays
     algo = args.algo        # 'Thompson', 'Infomax'
-    seed = args.seed        # Random seed
     
     # Set random seed
-    np.random.seed(seed)
+    ## np.random.seed(args.seed)
         
     # Output initialization
     curr_cum_reward = np.zeros(N)
@@ -298,6 +299,7 @@ def main(args):
             sigs = prior_params[:,1][np.arange(N),action] + 0.01*np.ones(N) #Choose sigma's for action chosen, add small correction for numeric stability
             #esses = prior_params[:,2][np.arange(N),action] #Choose s's for action chosen
             prior_params[:,0][np.arange(N),action] = (sigs**2 * r + mus) / (sigs**2 + 1)
+            #print("Mu's", prior_params[:,0])
             prior_params[:,1][np.arange(N),action] = sigs**2 / (sigs**2 + 1)
         
         # Time
@@ -311,6 +313,7 @@ def main(args):
     output = {'cum_reward':cum_reward, 'cum_subopt':cum_subopt, 'results_array':results_array, 'plays': plays}
 
     if args.v:
+        print("Algorithm:", args.algo)
         print('Total runtime: ' + str(t_end-t_start) + ' s')
         print("Mean Total Reward:", np.mean(cum_reward[:,-1]) )
         print("Mean Suboptimal Plays:", np.mean(cum_subopt[:,-1]) )
@@ -386,7 +389,6 @@ if __name__ == "__main__":
     MC_samples = args.int_samp
 
     # Run main function -------------------------------------------------------------------------
-    print("Algorithm:", args.algo)
     output = main(args)
     
     # Save output -------------------------------------------------------------------------------
